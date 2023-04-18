@@ -11,6 +11,7 @@ af_daemon_t mydaemon;
 af_server_t myserver;
 
 af_server_t comserver;
+af_client_t comclient;
 
 typedef struct _comport {
 	int              fd;
@@ -22,6 +23,9 @@ typedef struct _comport {
 	af_server_t      comserver;
 	af_server_cnx_t *cnx;
 	int              telnet_state;
+	int		 inout;
+	char		*remote;
+	af_client_t      comclient;
 } comport;
 
 int numcoms=0;
@@ -200,6 +204,8 @@ void c2m_read_config( char *conffile )
 	char    *logfile;
 	FILE    *logfh;
 	comport *comp;
+	int	inout = 0;
+	char 	*remote = NULL;
 
 	fh = fopen( conffile, "r" );
 	if ( fh == NULL )
@@ -221,6 +227,15 @@ void c2m_read_config( char *conffile )
 			continue;
 		}
 		ptr = strtok( line, ", \t\n\r" );
+		if (strncmp(ptr,(char *) "out",3) == 0) {
+			inout = 1;
+			ptr = strtok( NULL, ", \t\n\r" );
+		} else {
+			inout = 0;
+			if (strncmp(ptr,(char *) "in",2) == 0) {
+				ptr = strtok( NULL, ", \t\n\r" );
+			}
+		}
 		tcpport = atoi( ptr );
 		if ( tcpport < 1024 )
 		{
@@ -248,11 +263,20 @@ void c2m_read_config( char *conffile )
 			logfile = null;
 			logfile = strdup(ptr);
 			logfh = fopen( logfile, "a+" );
+			ptr = strtok( NULL, ", \t\n\r" );
 		}
 		else
 		{
 			logfile = NULL;
 			logfh = NULL;
+		}
+		if ( ptr )
+		{
+			remote = strdup(ptr);
+		}
+		else
+		{
+			remote = NULL;
 		}
 
 		comp = &coms[numcoms];
@@ -263,6 +287,8 @@ void c2m_read_config( char *conffile )
 		comp->logfh = logfh;
 		comp->fd = -1;
 		comp->cnx = NULL;
+		comp->inout = inout;
+		comp->remote = remote;
 		numcoms++;
 	}
 }
@@ -273,7 +299,7 @@ int main( int argc, char **argv )
 	char *conffile = "/etc/com2net.conf";
 
 	mydaemon.appname = argv[0];
-	mydaemon.daemonize = 1;
+	mydaemon.daemonize = 0;	// jck
 	mydaemon.log_level = LOG_WARNING;
 	mydaemon.sig_handler = c2m_signal;
 	mydaemon.log_name = argv[0];
@@ -339,15 +365,27 @@ int main( int argc, char **argv )
 
 	for ( i=0; i<numcoms; i++ )
 	{
-		coms[i].comserver.port = coms[i].tcpport;
-		coms[i].comserver.prompt = "";
-		coms[i].comserver.local = 0;
-		coms[i].comserver.max_cnx = 2;
-		coms[i].comserver.new_connection_callback = com_new_cnx;
-		coms[i].comserver.new_connection_context = &coms[i];
-		coms[i].comserver.command_handler = com_handler;
+		if ( coms[i].inout ) {
+			coms[i].comclient.service = NULL;
+			coms[i].comclient.port = coms[i].tcpport;
+			coms[i].comclient.ip = INADDR_LOOPBACK;	// localhost
+			coms[i].comclient.sock = -1;	// some high number
+			coms[i].comclient.prompt_len = 0;
+			coms[i].comclient.saved_len = 0;
 
-		af_server_start( &coms[i].comserver );
+			af_client_connect( &coms[i].comclient );
+
+		} else {
+			coms[i].comserver.port = coms[i].tcpport;
+			coms[i].comserver.prompt = "";
+			coms[i].comserver.local = 0;
+			coms[i].comserver.max_cnx = 2;
+			coms[i].comserver.new_connection_callback = com_new_cnx;
+			coms[i].comserver.new_connection_context = &coms[i];
+			coms[i].comserver.command_handler = com_handler;
+
+			af_server_start( &coms[i].comserver );
+		}
 	}
 
 	while ( !done )
@@ -361,9 +399,17 @@ int main( int argc, char **argv )
 void c2m_cli( char *cmd, af_server_cnx_t *cnx )
 {
 
-	fprintf( cnx->fh, "No commands defined yet\n" );
-	fprintf( cnx->fh, " Command NOT FOUND: %s\n", cmd );
+	if (strcmp(cmd,(char *)"bye\r\n") == 0) {
+		for ( int i=0; i<numcoms; i++ )
+		{
+			af_server_stop( &coms[i].comserver );
+		}
+	} else {
+		fprintf( cnx->fh, " Command NOT defined: %s\n", cmd );
+		fprintf( cnx->fh, " Enter \"bye\" to halt all af_servers\n" );
+	}
 	af_server_prompt( cnx );
+
 }
 
 void c2m_del_cnx( af_server_cnx_t *cnx )
