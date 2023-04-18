@@ -43,7 +43,7 @@ void c2m_signal( int signo )
 
 void c2m_usage( )
 {
-	printf("mcmonit [opts]\n" );
+	printf("com2net [opts]\n" );
 	printf("opts:\n" );
 	printf(" -v    = Version\n" );
 	printf(" -f    = run in foreground\n" );
@@ -228,6 +228,7 @@ void c2m_read_config( char *conffile )
 			continue;
 		}
 		ptr = strtok( NULL, ", \t\n\r" );
+		dev = null;
 		dev = strdup(ptr);
 		if ( strncmp( dev, "/dev", 4 ) != 0 )
 		{
@@ -244,6 +245,7 @@ void c2m_read_config( char *conffile )
 		ptr = strtok( NULL, ", \t\n\r" );
 		if ( ptr )
 		{
+			logfile = null;
 			logfile = strdup(ptr);
 			logfh = fopen( logfile, "a+" );
 		}
