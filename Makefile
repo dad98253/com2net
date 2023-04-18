@@ -15,7 +15,7 @@ $(DEP):%.d:%.c
 include $(DEP)
 
 $(TARGET): $(OBJ)
-	$(CC) -o $@ $^ -L../libappf -lappf
+	$(CC) -o $@ $^ -L../libappf -lappf -lm
 
 clean:
 	-$(RM) $(TARGET) $(OBJ) $(DEP)
