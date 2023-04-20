@@ -4,6 +4,7 @@
 
 #define VER_MAJOR 0
 #define VER_MINOR 1
+#define MAXCOMS 128
 
 int done=0;
 
@@ -23,13 +24,15 @@ typedef struct _comport {
 	af_server_t      comserver;
 	af_server_cnx_t *cnx;
 	int              telnet_state;
-	int		 inout;
-	char		*remote;
+	int		 		 inout;
+	char			*remote;
 	af_client_t      comclient;
+	char			*prompt;
+	char			*commands;
 } comport;
 
 int numcoms=0;
-comport coms[128];
+comport coms[MAXCOMS];
 
 
 void c2m_new_cnx( af_server_cnx_t *cnx, void *context );
@@ -206,6 +209,8 @@ void c2m_read_config( char *conffile )
 	comport *comp;
 	int	inout = 0;
 	char 	*remote = NULL;
+	char 	*prompt = NULL;
+	char 	*commands = NULL;
 
 	fh = fopen( conffile, "r" );
 	if ( fh == NULL )
@@ -243,7 +248,7 @@ void c2m_read_config( char *conffile )
 			continue;
 		}
 		ptr = strtok( NULL, ", \t\n\r" );
-		dev = null;
+		dev = NULL;
 		dev = strdup(ptr);
 		if ( strncmp( dev, "/dev", 4 ) != 0 )
 		{
@@ -260,7 +265,7 @@ void c2m_read_config( char *conffile )
 		ptr = strtok( NULL, ", \t\n\r" );
 		if ( ptr )
 		{
-			logfile = null;
+			logfile = NULL;
 			logfile = strdup(ptr);
 			logfh = fopen( logfile, "a+" );
 			ptr = strtok( NULL, ", \t\n\r" );
@@ -273,10 +278,29 @@ void c2m_read_config( char *conffile )
 		if ( ptr )
 		{
 			remote = strdup(ptr);
+			ptr = strtok( NULL, ", \t\n\r" );
 		}
 		else
 		{
 			remote = NULL;
+		}
+		if ( ptr )
+		{
+			prompt = strdup(ptr);
+			ptr = strtok( NULL, ", \t\n\r" );
+		}
+		else
+		{
+			prompt = NULL;
+		}
+		if ( ptr )
+		{
+			commands = strdup(ptr);
+			ptr = strtok( NULL, ", \t\n\r" );
+		}
+		else
+		{
+			commands = NULL;
 		}
 
 		comp = &coms[numcoms];
@@ -289,7 +313,13 @@ void c2m_read_config( char *conffile )
 		comp->cnx = NULL;
 		comp->inout = inout;
 		comp->remote = remote;
+		comp->prompt = prompt;
+		comp->commands = commands;
 		numcoms++;
+		if (numcoms == MAXCOMS) {
+			fprintf(stderr,"too many coms defined in the config file\nmaximum allowed is %i\n",MAXCOMS);
+			abort();
+		}
 	}
 }
 
@@ -297,9 +327,14 @@ int main( int argc, char **argv )
 {
 	int   ca, i;
 	char *conffile = "/etc/com2net.conf";
+	af_client_t *af_client_temp;
 
 	mydaemon.appname = argv[0];
-	mydaemon.daemonize = 0;	// jck
+#ifdef DEBUG
+	mydaemon.daemonize = 0;
+#else	// DEBUG
+	mydaemon.daemonize = 1;
+#endif	// DEBUG
 	mydaemon.log_level = LOG_WARNING;
 	mydaemon.sig_handler = c2m_signal;
 	mydaemon.log_name = argv[0];
@@ -366,12 +401,15 @@ int main( int argc, char **argv )
 	for ( i=0; i<numcoms; i++ )
 	{
 		if ( coms[i].inout ) {
-			coms[i].comclient.service = NULL;
-			coms[i].comclient.port = coms[i].tcpport;
-			coms[i].comclient.ip = INADDR_LOOPBACK;	// localhost
-			coms[i].comclient.sock = -1;	// some high number
-			coms[i].comclient.prompt_len = 0;
-			coms[i].comclient.saved_len = 0;
+//			coms[i].comclient.service = NULL;
+//			coms[i].comclient.port = coms[i].tcpport;
+//			coms[i].comclient.ip = INADDR_LOOPBACK;	// localhost
+//			coms[i].comclient.sock = -1;	// some high number
+//			coms[i].comclient.prompt_len = 0;
+
+			af_client_temp = af_client_new( (char*)"telnet", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
+
+			coms[i].comclient = *af_client_temp;
 
 			af_client_connect( &coms[i].comclient );
 
@@ -595,7 +633,7 @@ int com_filter_telnet( comport *comp, unsigned char *buf, int len )
 	int   i;
 	unsigned char  obuf[2048];
 	int   olen = 0;
-
+	// what follows will ignore all telnet option negotiation:
 	for ( i=0;i<len; i++ )
 	{
 		switch ( comp->telnet_state )
@@ -613,17 +651,17 @@ int com_filter_telnet( comport *comp, unsigned char *buf, int len )
 		case TELNET_IAC:
 			switch( buf[i] )
 			{
-			case 255:
+			case 255:	//  IAC
 				obuf[olen++] = buf[i];
 				comp->telnet_state = TELNET_NONE;
 				break;
-			case 254:
-			case 253:
-			case 252:
-			case 251:
+			case 254:	// DON'T (option code)
+			case 253:	// DO (option code)
+			case 252:	// WON'T (option code)
+			case 251:	// WILL (option code)
 				comp->telnet_state = TELNET_OPT;
 				break;
-			case 250:
+			case 250:	// SB (Indicates that what follows is subnegotiation of the indicated option)
 				comp->telnet_state = TELNET_SUBOPT;
 				break;
 			default:
@@ -635,7 +673,7 @@ int com_filter_telnet( comport *comp, unsigned char *buf, int len )
 			comp->telnet_state = TELNET_NONE;
 			break;
 		case TELNET_SUBOPT:
-			if ( buf[i] == 240 )
+			if ( buf[i] == 240 )	// SE (End of subnegotiation parameters)
 			{
 				comp->telnet_state = TELNET_NONE;
 			}
@@ -728,20 +766,21 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	cnx->user_data = comp;
 	cnx->disconnect_callback = com_del_cnx;
 
+	// see RFC 2355 and RFC 854:
 	buf[0] = 0xff;
-	buf[1] = 0xfb;
-	buf[2] = 0x03;
+	buf[1] = 0xfb;	// Will
+	buf[2] = 0x03;	// Confirm willingness to negotiate suppress go ahead
 	buf[3] = 0xff;
-	buf[4] = 0xfb;
-	buf[5] = 0x01;
+	buf[4] = 0xfb;	// Will
+	buf[5] = 0x01;	// Confirm willingness to negotiate echo
 	buf[6] = 0xff;
-	buf[7] = 0xfe;
-	buf[8] = 0x01;
+	buf[7] = 0xfe;	// Don't
+	buf[8] = 0x01;	// Confirmation that you are no longer expecting the other party to echo
 	buf[9]  = 0xff;
-	buf[10] = 0xfd;
-	buf[11] = 0x00;
+	buf[10] = 0xfd;	// Do
+	buf[11] = 0x00;	// Confirmation that you are expecting the other party to use Binary transmission
 
-	write( cnx->fd, buf, 12 );
+	write( cnx->fd, buf, 12 );	// going out to the newly connected telnet client
 	
 }
 
