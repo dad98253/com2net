@@ -6,22 +6,22 @@ For information about Telnet connection negotiations, see RFC 2355. Table 1 desc
 Table 1. Telnet commands from RFC 854
 
 Command			Code	Description
-SE 			X'F0'	End of subnegotiation parameters.
-NOP 			X'F1' 	No operation.
-Data Mark 		X'F2' 	The data stream portion of a Synch. This should always be accompanied by a TCP Urgent notification.
-Break 			X'F3' 	NVT character BRK.
-Interrupt Process	X'F4' 	The function IP.
-Abort output 		X'F5' 	The function AO.
-Are You There 		X'F6' 	The function AYT.
-Erase character		X'F7' 	The function EC.
-Erase Line 		X'F8' 	The function EL.
-Go ahead 		X'F9' 	The GA signal.
-SB	 		X'FA' 	Indicates that what follows is subnegotiation of the indicated option.
-WILL (option code) 	X'FB' 	Indicates the want to begin performing, or confirmation that you are now performing, the indicated option.
-WON'T (option code)	X'FC' 	Indicates the refusal to perform, or continue performing, the indicated option.
-DO (option code) 	X'FD' 	Indicates the request that the other party perform, or confirmation that you are expecting the other party to perform, the indicated option.
-DON'T (option code) 	X'FE' 	Indicates the demand that the other party stop performing, or confirmation that you are no longer expecting the other party to perform, the indicated option.
-IAC 			X'FF' 	Data byte 255.
+SE 			X'F0' (240)	End of subnegotiation parameters.
+NOP 			X'F1' (241)	No operation.
+Data Mark 		X'F2' (242)	The data stream portion of a Synch. This should always be accompanied by a TCP Urgent notification.
+Break 			X'F3' (243)	NVT character BRK.
+Interrupt Process	X'F4' (244)	The function IP.
+Abort output 		X'F5' (245)	The function AO.
+Are You There 		X'F6' (246)	The function AYT.
+Erase character		X'F7' (247)	The function EC.
+Erase Line 		X'F8' (248)	The function EL.
+Go ahead 		X'F9' (249)	The GA signal.
+SB	 		X'FA' (250)	Indicates that what follows is subnegotiation of the indicated option.
+WILL (option code) 	X'FB' (251)	Indicates the want to begin performing, or confirmation that you are now performing, the indicated option.
+WON'T (option code)	X'FC' (252)	Indicates the refusal to perform, or continue performing, the indicated option.
+DO (option code) 	X'FD' (253)	Indicates the request that the other party perform, or confirmation that you are expecting the other party to perform, the indicated option.
+DON'T (option code) 	X'FE' (254)	Indicates the demand that the other party stop performing, or confirmation that you are no longer expecting the other party to perform, the indicated option.
+IAC 			X'FF' (255)	Data byte 255.
 
 Table 2 lists the options available for Telnet commands from RFC 1060. For more information about Telnet protocols, see RFC 1060 and RFC 1011.
 
@@ -64,4 +64,5 @@ Option	Option	Name
 33 	21 	Remote Flow Control
 34 	22 	Linemode
 35 	23 	X Display Location
+39	27	New Environment
 255 	FF 	Extended-Options-List
