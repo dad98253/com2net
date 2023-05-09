@@ -9,7 +9,24 @@
  *          By: John Kuras
  *    Based on: af_server_start (by Colin Whittaker)
  */
-
+//
+// So, what I'm looking for here is something that will replace the following
+// for use in my ham shack:
+//     socat /dev/ttyS0 TCP4:dxc.kb2s.net:7300
+// I have out-of-date logging software running on an long unsupported version
+// of Windows 95. I need to trick Windows into thinking that I still have a TNC
+// connected to it (my local DX cluster, ve7cc, went dark several years ago).
+// Now his data stream is only available via telnet on the web. I also have an
+// old linux firewall machine in my shack which runs Red Hat 7. My plan is to
+// nul modem wire the serial ports of the two machines together, connect to
+// the telnet site on the linux box and pipe the stream out the com port at 2400
+// baud. The Windows machine will think it is the data stream from my TNC. In
+// theory, that should make my logging software happy. Socat can do this.
+// Unfortunately, socat isn't available on Red Hat 7. By turning com2net into
+// a telnet client rather than a telnet server, this should do the same thing. The
+// tcli app almost gets me there. However, it only writes to stdout. I need
+// to send data both ways via the com port...
+//
 
 #include "appf.h"
 #include <termios.h>
@@ -42,6 +59,7 @@ typedef struct _comport {
 	af_client_t      comclient;
 	char			*prompt;
 	char			*commands;
+	int				numprompts;
 	unsigned int 	connect_timo;	/* connect timeout */
 	unsigned int 	cmd_timo;		/* command timeout */
 	char			decoded[MAXDECODE];
@@ -95,6 +113,7 @@ extern comport coms[MAXCOMS];
 extern int com_filter_telnet( comport *comp, unsigned char *buf, int len );
 extern int af_server_set_sockopts( int s, int server_sock );
 extern void _af_server_cnx_handle_event( af_poll_t *ap );
+extern int send_client_command(af_client_t *cl, char * prompt, char * command);
 
 int af_client_start( comport *coms )
 {
@@ -427,6 +446,8 @@ void handle_server_socket_event( af_poll_t *af )
 		// tcli prompt was detected
 		tcli.conn.busy = FALSE;
 		tcli.cmd.current++;
+		// reply with the appropriate command...
+		send_client_command(&(coms->comclient), coms->prompt, coms->commands);
 		break;
 	default:
 		af_log_print(LOG_ERR, "%s: oops, unexpected status %d from client_read", __func__, status);
@@ -452,22 +473,25 @@ void handle_server_socket_event( af_poll_t *af )
 	}
 }
 
-int send_client_command(void)
+int send_client_command(af_client_t *fd, char * prompt, char * command)
 {
 	int status;
 	int exitval;
 
-	af_log_print(LOG_DEBUG, "%s: sending tcli command \"%s\"", __func__, tcli.cmd.part[tcli.cmd.current] );
+//	af_log_print(LOG_DEBUG, "%s: sending tcli command \"%s\"", __func__, tcli.cmd.part[tcli.cmd.current] );
+	af_log_print(LOG_DEBUG, "%s: sending tcli command \"%s\"", __func__, command );
 
 	// show user the command we're sending unless suppressed
 	if (tcli.opt.hide_prompt == FALSE)
 	if(1)
 	{
-		printf("%s%s\n", tcli.conn.client->prompt, tcli.cmd.part[tcli.cmd.current] );
+//		printf("%s%s\n", tcli.conn.client->prompt, tcli.cmd.part[tcli.cmd.current] );
+		printf("%s%s\n", prompt, command );
 		fflush(stdout);
 	}
 
-	status = af_client_send( tcli.conn.client, tcli.cmd.part[tcli.cmd.current] );
+//	status = af_client_send( tcli.conn.client, tcli.cmd.part[tcli.cmd.current] );
+	status = af_client_send(  fd, command );
 	status = AF_OK;
 	/*
 	client_send can return:
@@ -486,7 +510,8 @@ int send_client_command(void)
 		break;
 	default:
 		//  send failed
-		af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, status, tcli.cmd.part[tcli.cmd.current] );
+//		af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, status, tcli.cmd.part[tcli.cmd.current] );
+		af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, status, command );
 		exitval = 1;
 		break;
 	}

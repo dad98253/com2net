@@ -1,13 +1,75 @@
 
-#include <appf.h>
+#include "appf.h"
 #include <termios.h>
+#include "com2net.h"
 
-#define VER_MAJOR 0
-#define VER_MINOR 1
-#define MAXCOMS 128
+#define VER_MAJOR 1
+#define VER_MINOR 0
+#define MAXDECODE	250
+#define MAX_CMDS		2048
+#define MAX_CMD_BUF		4096
+#define DEFAULT_CONNECT_TIMO	5
+#define DEFAULT_CMD_TIMO	10
+#define DEFAULT_PORT		23
 
 int done=0;
 
+typedef struct _connect
+{
+	af_client_t *client;	/* af_client_t struct */
+	int busy;				/* server state: busy after command sent, idle once prompt detected */
+	unsigned int connect_timo;	/* connect timeout */
+	unsigned int cmd_timo;		/* command timeout */
+} connect_t;
+
+
+typedef struct _opts
+{
+    int debug_mode;
+    int hide_prompt;
+    int dump_hex;
+	char delim_char[2];
+	char filename[PATH_MAX];
+} opt_t;
+
+
+typedef struct _command
+{
+    char buf[MAX_CMD_BUF];
+    char *part[MAX_CMDS];
+    int num;
+    int current;
+} command_t;
+
+typedef struct _tcli
+{
+	opt_t opt;
+	connect_t conn;
+	command_t cmd;
+	int bailout;
+} tcli_t;
+
+// init defaults
+tcli_t tcli = {
+	opt:{
+		debug_mode:1,
+		hide_prompt:0,
+		dump_hex:0,
+		delim_char:",",
+		filename:""
+		},
+	conn:{
+		busy:0,
+		connect_timo:DEFAULT_CONNECT_TIMO,
+		cmd_timo:DEFAULT_CMD_TIMO
+		},
+	cmd:{
+		buf:"",
+		part:{NULL},
+		num:0,
+		current:0
+		}
+};
 af_daemon_t mydaemon;
 af_server_t myserver;
 
@@ -29,6 +91,10 @@ typedef struct _comport {
 	af_client_t      comclient;
 	char			*prompt;
 	char			*commands;
+	int				numprompts;
+	unsigned int 	connect_timo;	/* connect timeout */
+	unsigned int 	cmd_timo;		/* command timeout */
+	char			decoded[MAXDECODE];
 } comport;
 
 int numcoms=0;
@@ -41,6 +107,11 @@ void c2m_cli( char *cmd, af_server_cnx_t *cnx );
 void com_new_cnx( af_server_cnx_t *cnx, void *context );
 void com_del_cnx( af_server_cnx_t *cnx );
 void com_handler( char *cmd, af_server_cnx_t *cnx );
+
+extern int termios(int fd);
+
+extern int af_client_start( comport *coms );
+extern void handle_server_socket_event( af_poll_t *af );
 
 void c2m_signal( int signo )
 {
@@ -242,7 +313,7 @@ void c2m_read_config( char *conffile )
 			}
 		}
 		tcpport = atoi( ptr );
-		if ( tcpport < 1024 )
+		if ( (!inout) && (tcpport < 1024) )
 		{
 			printf( "Bad TCP port number %s\n", ptr );
 			continue;
@@ -278,7 +349,7 @@ void c2m_read_config( char *conffile )
 		if ( ptr )
 		{
 			remote = strdup(ptr);
-			ptr = strtok( NULL, ", \t\n\r" );
+			ptr = strtok( NULL, ",\t\n\r" );
 		}
 		else
 		{
@@ -315,6 +386,9 @@ void c2m_read_config( char *conffile )
 		comp->remote = remote;
 		comp->prompt = prompt;
 		comp->commands = commands;
+		comp->numprompts = 0;
+		if (comp->commands != NULL) comp->numprompts = 1;
+		comp->connect_timo = 15;
 		numcoms++;
 		if (numcoms == MAXCOMS) {
 			fprintf(stderr,"too many coms defined in the config file\nmaximum allowed is %i\n",MAXCOMS);
@@ -401,17 +475,40 @@ int main( int argc, char **argv )
 	for ( i=0; i<numcoms; i++ )
 	{
 		if ( coms[i].inout ) {
-//			coms[i].comclient.service = NULL;
-//			coms[i].comclient.port = coms[i].tcpport;
-//			coms[i].comclient.ip = INADDR_LOOPBACK;	// localhost
-//			coms[i].comclient.sock = -1;	// some high number
-//			coms[i].comclient.prompt_len = 0;
-
 			af_client_temp = af_client_new( (char*)"telnet", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
-
+			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"telnet", coms[i].tcpport, coms[i].prompt );
 			coms[i].comclient = *af_client_temp;
 
-			af_client_connect( &coms[i].comclient );
+/*			if ( af_client_connect( &coms[i].comclient ) )
+			{
+				af_log_print(LOG_ERR, "failed to connect to server (remote=%s, port=%d, prompt=\"%s\")", coms[i].remote, coms[i].comclient.port, coms[i].comclient.prompt );
+				continue;
+			}
+			else
+			{
+				af_log_print(LOG_DEBUG, "connected to server (remote=%s, port=%d)", coms[i].remote, coms[i].comclient.port );
+			}
+
+			// detect the initial prompt
+			if ( af_client_get_prompt( &(coms[i].comclient), coms[i].connect_timo*1000 ) )	// Note: this is a macro for af_client_read_timeout (see appf.h)
+			{
+				af_log_print(LOG_ERR, "failed to connect to detect prompt (\"%s\") within timeout (%d secs)", coms[i].comclient.prompt, coms[i].connect_timo );
+				continue;
+			}
+			// we are now connected to the remote server and logged in, connect the remote to the desired serial port and
+			// set up the polls.
+*/
+			coms[i].comserver.port = coms[i].tcpport;
+			coms[i].comserver.prompt = "";
+			coms[i].comserver.local = 0;
+			coms[i].comserver.max_cnx = 2;
+			coms[i].comserver.new_connection_callback = com_new_cnx;
+			coms[i].comserver.new_connection_context = &coms[i];
+			coms[i].comserver.command_handler = com_handler;
+			coms[i].comclient.service = strdup ("telnet");
+
+			af_client_start( &coms[i] );
+			coms[i].comserver.fd = coms[i].comclient.sock;
 
 		} else {
 			coms[i].comserver.port = coms[i].tcpport;
@@ -424,6 +521,12 @@ int main( int argc, char **argv )
 
 			af_server_start( &coms[i].comserver );
 		}
+	}
+	if (!numcoms) {
+		af_log_print(LOG_ERR, "No servers or clients specified; nothing to do." );
+		return 1;
+	} else {
+		af_log_print(LOG_INFO, "Starting %i connections.",numcoms );
 	}
 
 	while ( !done )
@@ -493,7 +596,7 @@ void com_port_handler( af_poll_t *ap )
 		{
 			if ( errno != EAGAIN || len == 0 )
 			{
-				af_log_print( LOG_WARNING, "com fd %d closed: errno %d (%s)",\
+				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
 					ap->fd, errno, strerror(errno)  );
 
 				af_poll_rem( ap->fd );
@@ -532,17 +635,55 @@ void com_port_handler( af_poll_t *ap )
 int com_set_port(int fd, int speed, int parity)
 {
 	struct termios tty;
+// on my linux, the termios struct looks as follows:
+// struct termios
+//   {
+//     tcflag_t c_iflag;		/* input mode flags */
+//     tcflag_t c_oflag;		/* output mode flags */
+//     tcflag_t c_cflag;		/* control mode flags */
+//     tcflag_t c_lflag;		/* local mode flags */
+//     cc_t c_line;				/* line discipline */
+//     cc_t c_cc[NCCS];			/* control characters */
+//     speed_t c_ispeed;		/* input speed */
+//     speed_t c_ospeed;		/* output speed */
+// #define _HAVE_STRUCT_TERMIOS_C_ISPEED 1
+// #define _HAVE_STRUCT_TERMIOS_C_OSPEED 1
+//   };
 	memset (&tty, 0, sizeof tty);
-	if ( tcgetattr (fd, &tty) != 0 )
-	{
-		af_log_print( LOG_ERR, "error %d from tcgetattr", errno);
+// get a copy of the current com port attributes
+	if ( tcgetattr (fd, &tty) ) {
+		af_log_print( LOG_ERR, "tcgetattr error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
 		return -1;
 	}
-
+// set the comm port attributes to a known state (this will likely whipe out most, if not all, of the settings)
 	cfmakeraw( &tty );
-	cfsetospeed (&tty, speed);
-	cfsetispeed (&tty, speed);
+//	if (errno) {
+//		af_log_print( LOG_ERR, "cfmakeraw error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
+//		return -1;
+//	}
+// per the ubuntu 22.04 man page:
+//    cfmakeraw() sets the terminal to something like the "raw" mode  of  the
+//    old  Version 7 terminal driver: input is available character by charac‐
+//    ter, echoing is disabled, and all special processing of terminal  input
+//    and  output characters is disabled.  The terminal attributes are set as
+//    follows:
+//        termios_p->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+//                        | INLCR | IGNCR | ICRNL | IXON);
+//        termios_p->c_oflag &= ~OPOST;
+//        termios_p->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+//        termios_p->c_cflag &= ~(CSIZE | PARENB);
+//        termios_p->c_cflag |= CS8;
 
+// set input and output baud rates
+	if ( cfsetospeed (&tty, speed) ) {
+		af_log_print( LOG_ERR, "cfsetospeed error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
+		return -1;
+	}
+	if ( cfsetispeed (&tty, speed) ) {
+		af_log_print( LOG_ERR, "cfsetispeed error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
+		return -1;
+	}
+// these notes are left over from the original code:
 //	tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;		// 8-bit chars
 	// disable IGNBRK for mismatched speed tests; otherwise receive break
 	// as \000 chars
@@ -563,28 +704,77 @@ int com_set_port(int fd, int speed, int parity)
 //	tty.c_cflag |= parity;
 
 	tty.c_cc[VDISCARD]= 0;          // no discard
+//   VDISCARD (Not in POSIX; not supported under Linux; 017, SI, Ctrl-O)  Tog‐
+//            gle: start/stop discarding pending output.  Recognized when IEX‐
+//            TEN is set, and then not passed as input.
 	tty.c_cc[VEOF]    = 0;          // no
+//    VEOF   (004, EOT, Ctrl-D) End-of-file character (EOF).  More precisely:
+//           this  character  causes the pending tty buffer to be sent to the
+//           waiting user program without waiting for end-of-line.  If it  is
+//           the first character of the line, the read(2) in the user program
+//           returns 0, which signifies end-of-file.  Recognized when  ICANON
+//           is set, and then not passed as input.
 	tty.c_cc[VEOL]    = 0;          // no
+//    VEOL   (0,  NUL)  Additional  end-of-line  character (EOL).  Recognized
+//            when ICANON is set.
 	tty.c_cc[VEOL2]   = 0;          // no
+//    VEOL2  (not in POSIX; 0, NUL) Yet another end-of-line character (EOL2).
+//           Recognized when ICANON is set.
 	tty.c_cc[VERASE]  = 0;          // no
+//    VERASE (0177, DEL, rubout, or 010, BS, Ctrl-H, or also #) Erase charac‐
+//           ter (ERASE).  This erases the previous not-yet-erased character,
+//           but  does  not  erase past EOF or beginning-of-line.  Recognized
+//           when ICANON is set, and then not passed as input.
 	tty.c_cc[VINTR]   = 0;          // no
+//    VINTR  (003, ETX, Ctrl-C, or also 0177, DEL, rubout) Interrupt  charac‐
+//           ter (INTR).  Send a SIGINT signal.  Recognized when ISIG is set,
+//           and then not passed as input.
 	tty.c_cc[VKILL]   = 0;          // no
+//    VKILL  (025, NAK, Ctrl-U, or Ctrl-X, or also @) Kill character  (KILL).
+//           This  erases  the input since the last EOF or beginning-of-line.
+//           Recognized when ICANON is set, and then not passed as input.
 	tty.c_cc[VLNEXT]  = 0;          // no
+//    VLNEXT (not in POSIX; 026, SYN, Ctrl-V) Literal next  (LNEXT).   Quotes
+//           the  next  input  character,  depriving it of a possible special
+//           meaning.  Recognized when IEXTEN is set, and then not passed  as
+//           input.
 	tty.c_cc[VMIN]    = 0;			// read doesn't block
+//    VMIN   Minimum number of characters for noncanonical read (MIN).
 	tty.c_cc[VQUIT]   = 0;          // no
+//    VQUIT  (034,  FS,  Ctrl-\) Quit character (QUIT).  Send SIGQUIT signal.
+//           Recognized when ISIG is set, and then not passed as input.
 	tty.c_cc[VREPRINT]= 0;          // no
+//    VREPRINT (not in POSIX; 022, DC2, Ctrl-R) Reprint unread characters  (RE‐
+//           PRINT).  Recognized when ICANON and IEXTEN are set, and then not
+//           passed as input.
 	tty.c_cc[VSTART]  = 0;          // no
+//    VSTART (021, DC1, Ctrl-Q) Start  character  (START).   Restarts  output
+//           stopped by the Stop character.  Recognized when IXON is set, and
+//           then not passed as input.
 	tty.c_cc[VSTOP]   = 0;          // no
+//    VSTOP  (023, DC3, Ctrl-S) Stop character  (STOP).   Stop  output  until
+//           Start  character  typed.   Recognized when IXON is set, and then
+//           not passed as input.
 	tty.c_cc[VSUSP]   = 0;          // no
+//    VSUSP  (032, SUB, Ctrl-Z) Suspend character (SUSP).  Send SIGTSTP  sig‐
+//           nal.  Recognized when ISIG is set, and then not passed as input.
 	tty.c_cc[VTIME]   = 5;			// 0.5 seconds read timeout
+//    VTIME  Timeout in deciseconds for noncanonical read (TIME).
+// Note (jck): setting Setting both VMIN & VTIME to 0 will give a non-blocking read... I'm not sure why he did this
 	tty.c_cc[VWERASE] = 0;          // no
-
+//    VWERASE (not  in  POSIX;  027, ETB, Ctrl-W) Word erase (WERASE).  Recog‐
+//           nized when ICANON and IEXTEN are set, and then not passed as in‐
+//           put.
 	tty.c_cflag &= ~CSTOPB;
+//    CSTOPB Set two stop bits, rather than one
 	tty.c_cflag &= ~CRTSCTS;
+//    CRTSCTS
+//           (not in POSIX) Enable RTS/CTS  (hardware)  flow  control.   [re‐
+//           quires _BSD_SOURCE or _SVID_SOURCE]
 
 	if ( tcsetattr (fd, TCSANOW, &tty) != 0 )
 	{
-		af_log_print( LOG_ERR, "error %d from tcsetattr", errno);
+		af_log_print( LOG_ERR, "tcsetattr error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
 		return -1;
 	}
 
@@ -598,6 +788,11 @@ int open_comport( comport *comp )
 	{
 		af_log_print( LOG_ERR, "Failed to open com port %s, errno %d (%s)", comp->dev, errno, strerror(errno) );
 		return -1;
+	} else {
+		af_log_print( LOG_DEBUG, "Opened com port %s (fd=%d)", comp->dev, comp->fd );
+#ifdef DEBUG
+		termios(comp->fd);
+#endif	// DEBUG
 	}
 
 	com_set_port( comp->fd, comp->speed, 0);
@@ -607,7 +802,7 @@ int open_comport( comport *comp )
 
 
 /////////////////////////////////////////////////////////////////////
-// telnet port
+// delete connection
 //
 void com_del_cnx( af_server_cnx_t *cnx )
 {
@@ -628,10 +823,12 @@ enum {
 	TELNET_SUBOPT = 3
 };
 
-int com_filter_telnet( comport *comp, unsigned char *buf, int len )
+int com_filter_telnet( void *extra, unsigned char *buf, int len )
 {
+	comport *comp = (comport*) extra;
 	int   i;
 	unsigned char  obuf[2048];
+	char scratch[50];
 	int   olen = 0;
 	// what follows will ignore all telnet option negotiation:
 	for ( i=0;i<len; i++ )
@@ -642,10 +839,12 @@ int com_filter_telnet( comport *comp, unsigned char *buf, int len )
 			if ( buf[i] == 255 )
 			{
 				comp->telnet_state = TELNET_IAC;
+				strcpy(comp->decoded,(char*)"Telnet IAC " );
 			}
 			else
 			{
 				obuf[olen++] = buf[i];
+				*(comp->decoded) = '\000';
 			}
 			break;
 		case TELNET_IAC:
@@ -654,28 +853,166 @@ int com_filter_telnet( comport *comp, unsigned char *buf, int len )
 			case 255:	//  IAC
 				obuf[olen++] = buf[i];
 				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
 				break;
 			case 254:	// DON'T (option code)
+				strcat(comp->decoded,(char*)"Don\'t " );
+				comp->telnet_state = TELNET_OPT;
+				break;
 			case 253:	// DO (option code)
+				strcat(comp->decoded,(char*)"Do " );
+				comp->telnet_state = TELNET_OPT;
+				break;
 			case 252:	// WON'T (option code)
+				strcat(comp->decoded,(char*)"Won\'t " );
+				comp->telnet_state = TELNET_OPT;
+				break;
 			case 251:	// WILL (option code)
+				strcat(comp->decoded,(char*)"Will " );
 				comp->telnet_state = TELNET_OPT;
 				break;
 			case 250:	// SB (Indicates that what follows is subnegotiation of the indicated option)
+				strcat(comp->decoded,(char*)"SB  (sub start) " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_SUBOPT;
+				*(comp->decoded) = '\000';
 				break;
 			default:
+				snprintf(scratch,50,"command 0x%x ", buf[i]);
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
 				break;
 			}
 			break;
 		case TELNET_OPT:
-			comp->telnet_state = TELNET_NONE;
+			switch ( buf[i] )
+			{
+			case 0:
+				//	Binary Transmission
+				snprintf(scratch,50,"Binary Transmission ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 1:
+				//	Echo
+				snprintf(scratch,50,"Echo ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 2:
+				//	Reconnection
+				snprintf(scratch,50,"Reconnection ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 3:
+				//	Suppress Go Ahead
+				snprintf(scratch,50,"Suppress Go Ahead ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 5:
+				//	Status
+				snprintf(scratch,50,"Status ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 17:
+				//	Extended ASCII
+				snprintf(scratch,50,"Extended ASCII ");
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			case 18:
+				// logout
+				strcat(comp->decoded,(char*)"logout  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			case 24:
+				// Terminal Type
+				strcat(comp->decoded,(char*)"Terminal Type  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			case 32:
+				// Terminal Speed
+				strcat(comp->decoded,(char*)"Terminal Speed  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			case 34:
+				// Linemode
+				strcat(comp->decoded,(char*)"Linemode  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			case 35:
+				//  Display Location
+				strcat(comp->decoded,(char*)"X Display Location  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			case 39:
+				//  New Environment
+				strcat(comp->decoded,(char*)"New Environment  " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				*(comp->decoded) = '\000';
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+				comp->telnet_state = TELNET_NONE;
+				break;
+			default:
+				snprintf(scratch,50,"option 0x%x ", buf[i]);
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+			}
 			break;
 		case TELNET_SUBOPT:
 			if ( buf[i] == 240 )	// SE (End of subnegotiation parameters)
 			{
+				strcat(comp->decoded,(char*)"SE (sub end) " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+			} else {
+				snprintf(scratch,50,"Sub opt data: 0x%x", buf[i]);
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
 			}
 			break;
 		}
@@ -758,10 +1095,13 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 
 	comp->cnx = cnx;
 
-	af_poll_add( comp->fd, POLLIN, com_port_handler, comp );
+	if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
 
-	af_poll_add( cnx->fd, POLLIN, com_handle_event, cnx );
-
+	if ( cnx->inout ) {
+		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
+	} else {
+		if (af_poll_add( cnx->fd, POLLIN, com_handle_event, cnx ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
+	}
 	// Set user data.
 	cnx->user_data = comp;
 	cnx->disconnect_callback = com_del_cnx;
