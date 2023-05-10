@@ -539,9 +539,9 @@ int main( int argc, char **argv )
 
 void c2m_cli( char *cmd, af_server_cnx_t *cnx )
 {
-
+	int i;
 	if (strcmp(cmd,(char *)"bye\r\n") == 0) {
-		for ( int i=0; i<numcoms; i++ )
+		for ( i=0; i<numcoms; i++ )
 		{
 			af_server_stop( &coms[i].comserver );
 		}

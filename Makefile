@@ -3,7 +3,7 @@
 CFLAGS += -fPIC -Wall -O0 -g -I. -I../libappf
 
 TARGET=com2net
-SRC = com2net.c
+SRC = com2net.c af_client_start.c   termios.c
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
@@ -15,7 +15,7 @@ $(DEP):%.d:%.c
 include $(DEP)
 
 $(TARGET): $(OBJ)
-	$(CC) -o $@ $^ -L../libappf -lappf -lm
+	$(CC) -o $@ $^ -L../../libappf2/src -lappf -lm -lrt
 
 clean:
 	-$(RM) $(TARGET) $(OBJ) $(DEP)

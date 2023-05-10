@@ -28,6 +28,7 @@
 #include "com2net.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*x))
+#define BIGBUFSIZE	10000
 
 struct flag
 {
@@ -274,6 +275,8 @@ main(int argc, char **argv)
 int termios( int fd) {
 	struct termios t;
 	cc_t *cc;
+	char buf[BIGBUFSIZE];
+	int loc = 0;
 /*	char *p, *q;
 	int fd;
 
@@ -301,7 +304,6 @@ int termios( int fd) {
 //	V(c_cflag);
 //	V(c_lflag);
 //#undef V
-	char buf[10000];
 #define V(name) sprint(buf, #name, t.name, name, ARRAY_SIZE(name))
 	V(c_iflag); af_log_print(LOG_DEBUG, "%s",buf);
 	V(c_oflag); af_log_print(LOG_DEBUG, "%s",buf);
@@ -310,7 +312,6 @@ int termios( int fd) {
 #undef V
 
 //	printf("c_cc\t\t");
-	int loc =0;
 	for (cc = t.c_cc; cc < t.c_cc + ARRAY_SIZE(t.c_cc); cc++)
 //		printf("%s%u", &","[cc == t.c_cc], *cc);
 		loc+=sprintf(buf+loc,"%s%u", &","[cc == t.c_cc], *cc);

@@ -43,6 +43,7 @@
 #define DEFAULT_CMD_TIMO	10
 #define DEFAULT_PORT		23
 #define MAXDECODE	250
+#define TEMPBUFSIZE     512
 
 typedef struct _comport {
 	int              fd;
@@ -126,6 +127,7 @@ int af_client_start( comport *coms )
 	unsigned int addr;
 	struct hostent *hp;
 	struct sockaddr_in server;
+	char *buf;
 	unsigned short usport = DEFAULT_PORT;
 //	*client = (af_client_t*)(&(coms->comclient));
 	client = (af_client_t *)&(coms->comclient);
@@ -321,10 +323,6 @@ int af_client_start( comport *coms )
 
 	if ( strlen(tcli.opt.filename) )
 	{
-		FILE *fh;
-		char buf[2048];
-		char *ptr;
-
 		if ( (fh=fopen( tcli.opt.filename, "r" )) == NULL )
 		{
 			af_log_print(LOG_ERR, "failed to open command file %s", tcli.opt.filename );
@@ -366,8 +364,6 @@ int af_client_start( comport *coms )
 //	nulline[0] = '\000';	// leave room for the appf library to tack on a \r
 //	if ( af_client_send( client, nulline ) ) myexit(1);
 
-#define TEMPBUFSIZE	512
-	char *buf;
 	buf = (char *)malloc(TEMPBUFSIZE);
 	if ( buf != NULL ) {
 		snprintf(buf, TEMPBUFSIZE, "\x1b[2J%s is connected to %s", coms->dev, coms->remote);
@@ -398,7 +394,8 @@ void af_client_stop( af_client_t *client )
 
 void myexit(int status)
 {
-	for ( int i=0; i<numcoms; i++ ) {
+	int i;
+	for ( i=0; i<numcoms; i++ ) {
 		if (coms[i].inout) {
 			// close connection to server
 			af_client_delete( &(coms[i].comclient) );
@@ -615,8 +612,8 @@ void dump_as_hex(char *buf, int len)
 void _af_client_handle_new_connection( comport *coms )
 {
 	af_server_t *serv;
-	serv = (af_server_t *)&(coms->comserver);
 	af_server_cnx_t *cnx;
+	serv = (af_server_t *)&(coms->comserver);
 
 	if ( ( cnx = _af_client_add_connection( coms ) ) != NULL )
 	{
@@ -650,12 +647,12 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 {
 	af_client_t *client;
 	af_server_t *server;
-	client = (af_client_t *)&(coms->comclient);
-	server = (af_server_t *)&(coms->comserver);
 
 	int                 s, fd_dup;
 	af_server_cnx_t    *cnx = NULL;
 	struct sockaddr_in  raddr = {};
+	client = (af_client_t *)&(coms->comclient);
+	server = (af_server_t *)&(coms->comserver);
 
 	s = server->fd;
 
