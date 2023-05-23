@@ -91,6 +91,7 @@ typedef struct _comport {
 	af_client_t      comclient;
 	char			*prompt;
 	char			*commands;
+	char			*password;
 	int				numprompts;
 	unsigned int 	connect_timo;	/* connect timeout */
 	unsigned int 	cmd_timo;		/* command timeout */
