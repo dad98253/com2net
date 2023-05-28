@@ -2,6 +2,8 @@
 #include "appf.h"
 #include <termios.h>
 #include "com2net.h"
+#define COM2NETBMAIN
+#include "netlink.h"
 
 #define VER_MAJOR 1
 #define VER_MINOR 0
@@ -108,11 +110,28 @@ void c2m_cli( char *cmd, af_server_cnx_t *cnx );
 void com_new_cnx( af_server_cnx_t *cnx, void *context );
 void com_del_cnx( af_server_cnx_t *cnx );
 void com_handler( char *cmd, af_server_cnx_t *cnx );
+void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
+CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
+CommandCallBack_t ProcessPowerOutletStatus (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
 
 extern int termios(int fd);
 
 extern int af_client_start( comport *coms );
 extern void handle_server_socket_event( af_poll_t *af );
+extern void handle_server_socket_raw_event( af_poll_t *af );
+
+int stripquotes(char ** string ) {
+	char * prompt = *string;
+	int iret = 0;
+	if ( *prompt == '\"' && *(prompt + strlen(prompt) - 1) == '\"' ) {
+		prompt = strdup(*string+1);
+		free(*string);
+		*(prompt + strlen(prompt) - 1) = '\000';
+		iret = 1;
+	}
+	*string = prompt;
+	return(iret);
+}
 
 void c2m_signal( int signo )
 {
@@ -307,6 +326,12 @@ void c2m_read_config( char *conffile )
 		if (strncmp(ptr,(char *) "out",3) == 0) {
 			inout = 1;
 			ptr = strtok( NULL, ", \t\n\r" );
+		} else if (strncmp(ptr,(char *) "racklinks",9) == 0) {
+			inout = 2;
+			ptr = strtok( NULL, ", \t\n\r" );
+		} else if (strncmp(ptr,(char *) "racklink",8) == 0) {
+			inout = 3;
+			ptr = strtok( NULL, ", \t\n\r" );
 		} else {
 			inout = 0;
 			if (strncmp(ptr,(char *) "in",2) == 0) {
@@ -322,14 +347,15 @@ void c2m_read_config( char *conffile )
 		ptr = strtok( NULL, ", \t\n\r" );
 		dev = NULL;
 		dev = strdup(ptr);
-		if ( strncmp( dev, "/dev", 4 ) != 0 )
+		stripquotes(&dev);
+		if ( strlen(dev) > 0 && strncmp( dev, "/dev", 4 ) != 0 )
 		{
 			printf( "Bad device %s\n", ptr );
 			continue;
 		}
 		ptr = strtok( NULL, ", \t\n\r" );
 		speed = atoi( ptr );
-		if ( speed <= 0 )
+		if ( speed < 0 )
 		{
 			printf( "Bad speed %s\n", ptr );
 			continue;
@@ -339,7 +365,13 @@ void c2m_read_config( char *conffile )
 		{
 			logfile = NULL;
 			logfile = strdup(ptr);
+			stripquotes(&logfile);
 			logfh = fopen( logfile, "a+" );
+			if ( logfh == NULL ) {
+				fprintf(stderr, "log file %s could not be opened: errno %d (%s)",\
+						logfile, errno, strerror(errno) );
+				logfile = NULL;
+			}
 			ptr = strtok( NULL, ", \t\n\r" );
 		}
 		else
@@ -350,6 +382,7 @@ void c2m_read_config( char *conffile )
 		if ( ptr )
 		{
 			remote = strdup(ptr);
+			stripquotes(&remote);
 			ptr = strtok( NULL, ",\t\n\r" );
 		}
 		else
@@ -359,6 +392,7 @@ void c2m_read_config( char *conffile )
 		if ( ptr )
 		{
 			prompt = strdup(ptr);
+			stripquotes(&prompt);
 			ptr = strtok( NULL, ", \t\n\r" );
 		}
 		else
@@ -368,6 +402,7 @@ void c2m_read_config( char *conffile )
 		if ( ptr )
 		{
 			commands = strdup(ptr);
+			stripquotes(&commands);
 			ptr = strtok( NULL, ", \t\n\r" );
 		}
 		else
@@ -475,7 +510,7 @@ int main( int argc, char **argv )
 
 	for ( i=0; i<numcoms; i++ )
 	{
-		if ( coms[i].inout ) {
+		if ( coms[i].inout == 1 ) {
 			af_client_temp = af_client_new( (char*)"telnet", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
 			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"telnet", coms[i].tcpport, coms[i].prompt );
 			coms[i].comclient = *af_client_temp;
@@ -510,6 +545,44 @@ int main( int argc, char **argv )
 
 			af_client_start( &coms[i] );
 			coms[i].comserver.fd = coms[i].comclient.sock;
+
+		} else if ( coms[i].inout == 2 ) {
+			af_client_temp = af_client_new( (char*)"NetLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
+			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"NetLink", coms[i].tcpport, coms[i].prompt );
+			coms[i].comclient = *af_client_temp;
+			coms[i].comserver.port = coms[i].tcpport;
+			coms[i].comserver.prompt = "";
+			coms[i].comserver.local = 0;
+			coms[i].comserver.max_cnx = 2;
+			coms[i].comserver.new_connection_callback = com_new_cnx;
+			coms[i].comserver.new_connection_context = &coms[i];
+			coms[i].comserver.command_handler = com_handler;
+			coms[i].comclient.service = strdup ("NetLink");
+
+			af_client_start( &coms[i] );
+			coms[i].comserver.fd = coms[i].comclient.sock;
+
+		} else if ( coms[i].inout == 3 ) {
+			af_client_temp = af_client_new( (char*)"NetLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
+			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"NetLink", coms[i].tcpport, coms[i].prompt );
+			coms[i].comclient = *af_client_temp;
+			coms[i].comserver.port = coms[i].tcpport;
+			coms[i].comserver.prompt = "";
+			coms[i].comserver.local = 0;
+			coms[i].comserver.max_cnx = 2;
+			coms[i].comserver.new_connection_callback = com_new_cnx;
+			coms[i].comserver.new_connection_context = &coms[i];
+			coms[i].comserver.command_handler = com_handler;
+			coms[i].comclient.service = strdup ("NetLink");
+
+			af_client_start( &coms[i] );
+			coms[i].comserver.fd = coms[i].comclient.sock;
+			// This is a NetLink run
+			// set any required NetLink callback functions
+			REGISTER_CALLBACK(PING_CMD, ProcessPing);
+			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
+			// send the password
+			if ( send_NetLink_login(&(coms[i].comclient),coms[i].commands) ) return(0);
 
 		} else {
 			coms[i].comserver.port = coms[i].tcpport;
@@ -587,6 +660,7 @@ void com_port_handler( af_poll_t *ap )
 	int              len = 0;
 	char             buf[2048];
 	comport         *comp = (comport *)ap->context;
+	int				 iret = 0;
 
 	if ( ap->revents & POLLIN )
 	{
@@ -613,7 +687,9 @@ void com_port_handler( af_poll_t *ap )
 			// Send data to the client
 			if ( comp->cnx )
 			{
-				write( comp->cnx->fd, buf, len );
+				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
+					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+				}
 			}
 			// Log it
 			if ( comp->logfh )
@@ -1029,6 +1105,7 @@ void com_handle_event( af_poll_t *ap )
 	unsigned char    buf[2048];
 	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
 	comport *comp = (comport *)cnx->user_data;
+	int				 iret = 0;
 
 
 	if ( ap->revents & POLLIN )
@@ -1056,7 +1133,10 @@ void com_handle_event( af_poll_t *ap )
 			// filter telnet data out
 			len = com_filter_telnet( comp, buf, len );
 
-			write( comp->fd, buf, len );
+			if ( ( iret = write( comp->fd, buf, len ) ) == -1 ) {
+				fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+			}
+
 		}
 	}
 	else if ( ap->revents )
@@ -1071,6 +1151,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 {
 	char         buf[128];
 	comport     *comp = (comport *)context;
+	int 		 iret = 0;
 
 	// If another client is connected, get rid of him.
 	if ( comp->cnx != NULL )
@@ -1083,24 +1164,27 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	// get rid of the stock handler
 	af_poll_rem( cnx->fd );
 
+	if ( cnx->inout != 3 ) {	// don't open a com port if this is a NetLink connect via TCP
 	// Open the comport if it is not open
-	if ( comp->fd < 0 )
-	{
-		if ( open_comport( comp ) < 0 )
+		if ( comp->fd < 0 )
 		{
-			fprintf( cnx->fh, "Failed to open com port %s\r\n\n\nBYE!\r\n", comp->dev );
-			af_server_disconnect(cnx);
-			return;
+			if ( open_comport( comp ) < 0 )
+			{
+				fprintf( cnx->fh, "Failed to open com port %s\r\n\n\nBYE!\r\n", comp->dev );
+				af_server_disconnect(cnx);
+				return;
+			}
 		}
+
+		comp->cnx = cnx;
+
+		if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
 	}
-
-	comp->cnx = cnx;
-
-	if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
-
-	if ( cnx->inout ) {
+	if ( cnx->inout == 1 ) {
 		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
-	} else {
+	} else if ( cnx->inout > 1 ) {
+		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_raw_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
+	}else {
 		if (af_poll_add( cnx->fd, POLLIN, com_handle_event, cnx ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
 	}
 	// Set user data.
@@ -1121,7 +1205,10 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	buf[10] = 0xfd;	// Do
 	buf[11] = 0x00;	// Confirmation that you are expecting the other party to use Binary transmission
 
-	write( cnx->fd, buf, 12 );	// going out to the newly connected telnet client
+	if ( ( iret = write( cnx->fd, buf, 12 ) ) == -1 ) {		// going out to the newly connected telnet client
+		fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+	}
+
 	
 }
 
@@ -1129,3 +1216,352 @@ void com_handler( char *cmd, af_server_cnx_t *cnx )
 {
 }
 
+void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr) {
+	CommandCallBack[command] = ptr;
+	printf("Callback routine registered for NetLink command number 0x%02x\n", command);
+}
+
+CommandCallBack_t ProcessPing (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+	// let's interogate switch settings on each ping...
+	if ( subcommand == 1 ) {
+		printf("Interrogating Power Outlet status...\n");
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(3), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(4), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(5), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
+		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
+	}
+	return(0);
+}
+
+CommandCallBack_t ProcessPowerOutletStatus (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+	char ctemp[260];
+	// print the switch setting
+	if ( datasize > 255 ) goto ret1;
+	if ( subcommand == 0x10 ) {			// Response to a command
+		if ( datasize < 9 ) goto ret1;
+		strncpy(ctemp,(const char *)(envelope+2),4);
+		ctemp[4] = '\000';
+		printf ("Power outlet %u is %s, cycle time is %s seconds\n",*envelope,ONOFF(*(envelope+1)),ctemp );
+	}
+ret1:
+	return(0);
+}
+
+unsigned char * c2p ( const int i ) { ctempjk = (unsigned char)i; return(&ctempjk);}
+
+int send_NetLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize) {
+	unsigned int sum = 0;
+	unsigned char * datapacket;
+	unsigned char * ptr;
+	int i;
+	int status;
+	int exitval;
+	int packetsize;
+
+	packetsize = datasize + 5;
+	ptr = datapacket = (unsigned char *) calloc(packetsize + 3 , 1);
+	*ptr = 0xfe;							// header
+	ptr++;
+	*ptr = (unsigned char)(datasize +3);	// length
+	ptr++;
+	*ptr = (unsigned char)(destination);	// Destination
+	ptr++;
+	*ptr = (unsigned char)(command);		// Command
+	ptr++;
+	*ptr = (unsigned char)(subcommand);		// Sub Command
+	ptr++;
+	if (datasize) {
+		for (i = 0; i<datasize; i++) {
+			*ptr = *(data+i);				// next byte of data
+			ptr++;
+		}
+	}
+	for ( i=0; i<packetsize; i++ ) {
+		sum+=*(datapacket+i);
+	}
+	*ptr = sum & 0x7f;
+	ptr++;
+	*ptr = 0xff;
+
+
+
+
+		af_log_print(LOG_DEBUG, "%s: sending NetLink command \"%i\", sub command \"%i\" to %i with %i data bytes", __func__, command, subcommand, destination, datasize );
+
+		// show user the command we're sending unless suppressed
+		if (tcli.opt.hide_prompt == FALSE)
+		{
+
+			printf("sending : (0x)");
+			for (i=0; i< (packetsize+2); i++) {
+				printf(" %02x", *(datapacket+i));
+			}
+			printf("\n");
+			fflush(stdout);
+		}
+
+		status = af_client_send_raw( fd, datapacket, (size_t)(packetsize+2) );
+		/*
+		client_send can return:
+			AF_TIMEOUT
+			AF_ERRNO
+			AF_SOCKET
+			AF_OK
+		*/
+
+		switch ( status )
+		{
+		case AF_OK:
+			// command was sent successfully
+			tcli.conn.busy = TRUE;
+			exitval = 0;
+			break;
+		default:
+			//  send failed
+			af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, status, tcli.cmd.part[tcli.cmd.current] );
+			exitval = 1;
+			break;
+		}
+
+
+
+	free(datapacket);
+	return(exitval);
+}
+
+int send_NetLink_login(af_client_t *fd, char * password) {
+	char * userpassword = NULL;
+	userpassword = (char*)malloc(strlen(password)+7);
+	strcpy(userpassword,"user|");
+	strcat(userpassword,password);
+	if ( send_NetLink_command(fd,0,LOGIN_CMD,SET_SCMD,(unsigned char *)userpassword, strlen(userpassword)) ) {
+		free(userpassword);
+		return(1);
+	}
+	free(userpassword);
+	return(0);
+}
+
+int process_NetLink_message(af_client_t *cl, char *buf, int *len) {
+	int destination,command,subcommand,datasize;
+	unsigned char *envelope;
+	unsigned char *nextpacket;
+	char *tempbuf;
+	int templen;
+	int iret = -1;
+	tempbuf = buf;
+	templen = *len;
+
+	while ( iret < 0 ) {
+		iret = decode_NetLink_command( &destination, &command, &subcommand, (unsigned char *)tempbuf, (unsigned int)(templen), &envelope, &datasize, &nextpacket);
+		if ( iret > 0 ) return(iret);
+		printf( " destination, command, subcommand - %i, %i, %i\n",destination, command, subcommand);
+		switch ( (unsigned char)command )
+			{
+				case NACK_CMD :	// NACK
+					printf("NACK received - error detected at device\n");
+					switch ( *envelope )
+					{
+					case BADCRC_ERR :	//	 Bad CRC on previous command
+						printf("Bad CRC on previous command\n");
+						break;
+					case BADLENGTH_ERR :	//	 Bad Length on previous command
+						printf("Bad Length on previous command\n");
+						break;
+					case BADESCAPE_ERR :	//   Bad Escape sequence on previous command
+						printf("Bad Escape sequence on previous command\n");
+						break;
+					case COMMANDINVALID_ERR :	//   Previous command invalid
+						printf("Previous command invalid\n");
+						break;
+					case SUBCOMMANDINVALID_ERR :	//   Previous sub-command invalid
+						printf("Previous sub-command invalid\n");
+						break;
+					case INCORRECTBYTECOUNT_ERR :	//   Previous command incorrect byte count
+						printf("Previous command incorrect byte count\n");
+						break;
+					case INVALIDDATABYTES_ERR :	//   Invalid data bytes in previous command
+						printf("Invalid data bytes in previous command\n");
+						break;
+					case INVALIDCREDENTIALS_ERR :	//   Invalid Credentials (note: need to login again)
+						printf("Invalid Credentials (note: need to login again)\n");
+						break;
+					case UNKNOWN_ERR :	//   Unknown Error
+						printf("Unknown Error\n");
+						break;
+					case ACCESSDENIED_ERR :	//   Access Denied (EPO)
+						printf("Access Denied (EPO)\n");
+						break;
+					default:
+						printf("un-recognized error number (\'0x%02x\')\n",*envelope);
+						return(-99);
+					}
+					break;
+				case PING_CMD :	// Ping/Pong
+					if ( subcommand == 1 ) {
+						printf("Ping...(Sending Pong)\n");
+						// send Pong
+						send_NetLink_command(cl,0,0x01,0x10,(unsigned char *)"", 0);
+					}
+					break;
+				case LOGIN_CMD :	// login/response
+					if ( subcommand == 0x10 && datasize == 4) {
+						if ( *envelope == 0 ) {
+							printf("login rejected...\n");
+						} else if ( *envelope == 1 ) {
+							printf("login successful...\n");
+						} else {
+							printf("unrecognized login response...\n");
+						}
+					}
+					break;
+				case READPOWEROUTLET_CMD :	// Read/write Power Outlet
+					break;
+				case READDRYCONTACT_CMD :	// Read/write Dry Contact
+					break;
+				case READOUTLETNAME_CMD :	// Read/write Outlet name
+					break;
+				case READCONTACTNAME_CMD :	// Read/write Contact name
+					break;
+				case READOUTLETCOUNT_CMD :	// Read Outlet count
+					break;
+				case READCONTACTCOUNT_CMD :	// Read Contact count
+					break;
+				case SEQUENCING_CMD :	// Sequencing command
+					break;
+				case ENERGYMANAGEMENT_CMD :	// Energy Management Command
+					break;
+				case EMERGENCYPOWEROFF_CMD :	// Emergency Power Off Command
+					break;
+				case LOGALERTS_CMD :	// Log Alerts Commands
+					break;
+				case LOGSTATUS_CMD :	// Log Status Commands
+					break;
+					// Sensor Value Commands:
+				case KILOWATTHOURS_CMD :	// Kilowatt Hours
+					break;
+				case PEAKVOLTAGE_CMD :	// Peak Voltage
+					break;
+				case RMSVOLTAGECHANGES_CMD :	// RMS Voltage Changes
+					break;
+				case PEAKLOAD_CMD :	// Peak Load
+					break;
+				case RMSLOAD_CMD :	// RMS Load
+					break;
+				case TEMPERATURE_CMD :	// Temperature
+					break;
+				case WATTAGE_CMD :	// Wattage
+					break;
+				case POWERFACTOR_CMD :	// Power Factor
+					break;
+				case THERMALLOAD_CMD :	// Thermal Load
+					break;
+				case SURGEPROTECTSTATE_CMD :	// Surge Protection State
+					break;
+				case ENERGYMANAGEMENTSTATE_CMD :	// Energy Management State
+					break;
+				case OCCUPANCYSTATE_CMD :	// Occupancy State
+					break;
+					// Threshold Commands:
+				case LOWVOLTAGETHRESHOLD_CMD :	// Low Voltage Threshold
+					break;
+				case HIGHVOLTAGETHRESHOLD_CMD :	// High Voltage Threshold
+					break;
+				case MAXLOADCURRENT_CMD :	// Max Load Current
+					break;
+				case MINLOADCURRENT_CMD :	// Min Load Current
+					break;
+				case MAXTEMPERATURE_CMD :	// Max Temperature
+					break;
+				case MINTEMPERATURE_CMD :	// Min Temperature
+					break;
+					// Log stuff:
+				case LOGENTRYREAD_CMD :	// Log Entry Read
+					break;
+				case LOGENTRYCOUNT_CMD :	// Get Log Count
+					break;
+				case CLEARLOG_CMD :	// Clear Log
+					break;
+					// Product Rating and Information:
+				case PARTNUMBER_CMD :	// Part Number
+					break;
+				case AMPHOURRATING_CMD :	// Product Amp Hour Rating
+					break;
+				case SURGEPROTECTEXIST_CMD :	// Product Surge Existence
+					break;
+				case IPADDRESS_CMD :	// Current IP Address
+					break;
+				case MACKADDRESS_CMD :	// MAC Address
+					break;
+
+				default:
+					return(-99);
+					break;
+			}
+// process command callbacks
+		if ( CommandCallBack[command] ) GET_CALLBACK(command) ( cl, destination, subcommand, envelope, datasize );
+// are there more commands to process in this record?
+		if ( iret < 0 ) {
+			templen -= ( nextpacket - (unsigned char *)tempbuf );
+			tempbuf = (char *)nextpacket;
+		}
+	}
+
+	return(1);
+}
+
+int decode_NetLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket) {
+	unsigned int sum = 0;
+	unsigned char * datapacket;
+	unsigned char chksum;
+	int i;
+	int packetsize;
+	*nextpacket = NULL;
+
+	if ( len < 7 ) {					// minimum length
+		printf ("Not a NetLink message\n");
+		return(1);
+	}
+	*datasize = (int)(*(raw+1));			// datasize
+
+	packetsize = *datasize + 2;
+	// check checksum
+	if (packetsize > 0) {
+		for ( i=0; i<packetsize; i++ ) {
+			sum+=*(raw+i);
+		}
+		chksum = sum & 0x7f;
+	}
+	if ( chksum != *(raw+packetsize) ) {	// checksum
+		printf ("Bad message checksum, calculated = 0x%02x, read = 0x%02x\n",chksum , *(raw+packetsize) );
+		return(2);
+	}
+	if ( *raw != 0xfe ) {					// header
+		printf ("Bad NetLink message header\n");
+		return(3);
+	}
+	if ( *(raw+packetsize+1) != 0xff ) {	// tail
+		printf ("Bad NetLink message tail character\n");
+		return(4);
+	}
+	if ( *(raw+1) != (unsigned char)( len - 4 ) ) {	// length
+		*nextpacket = raw + packetsize + 2;
+	}
+
+
+	datapacket = raw + 2;
+	*destination = (int)(*datapacket);		// destination
+	datapacket++;
+	*command = (int)(*datapacket);			// command
+	datapacket++;
+	*subcommand = (int)(*datapacket);		// sub command
+	datapacket++;
+	*data = datapacket;						// data
+
+	if ( *nextpacket ) return(-1);
+	return(0);
+}

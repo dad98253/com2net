@@ -29,6 +29,7 @@
 //
 
 #include "appf.h"
+#include "netlink.h"
 #include <termios.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -109,6 +110,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms );
 void _af_client_handle_new_connection( comport *coms );
 void myexit(int status);
 void handle_server_socket_event( af_poll_t *af );
+void handle_server_socket_raw_event( af_poll_t *af );
 
 extern int numcoms;
 extern comport coms[MAXCOMS];
@@ -116,6 +118,7 @@ extern int com_filter_telnet( comport *comp, unsigned char *buf, int len );
 extern int af_server_set_sockopts( int s, int server_sock );
 extern void _af_server_cnx_handle_event( af_poll_t *ap );
 extern int send_client_command(af_client_t *cl, char * prompt, char * command);
+extern int process_NetLink_message(af_client_t *cl, char *buf, int *len);
 
 int af_client_start( comport *coms )
 {
@@ -471,6 +474,63 @@ void handle_server_socket_event( af_poll_t *af )
 	}
 }
 
+void handle_server_socket_raw_event( af_poll_t *af )
+{
+	int status;
+	int i;
+	char buf[MAX_SOCK_READ_BUF];
+	int len = MAX_SOCK_READ_BUF;
+	comport *coms;
+	coms = (comport*) (af->context);
+
+	//af_log_print(LOG_DEBUG, "%s: revents %d", __func__, revents);
+
+	// Read with 1 ms timeout since we are using the poll loop to get here.
+	status = af_client_read_raw_timeout( &(coms->comclient), buf, &len, 1 );
+
+
+//	af_log_print( LOG_DEBUG, "%s: client_read() returned %d, len=%d", __func__, status, len );
+
+	// Handle status
+	switch ( status )
+	{
+	case AF_TIMEOUT:
+		// Still going.. no PROMPT yet.
+		break;
+	case AF_BUFFER:
+			// read buffer full, poll will fire us again immediately to read the rest
+		break;
+	case AF_SOCKET:
+		//  DCLI server probably died...
+		tcli.bailout = TRUE;
+		len = 0;
+		break;
+	case AF_OK:
+		// tcli prompt was detected
+		tcli.conn.busy = FALSE;
+		tcli.cmd.current++;
+		// reply with the appropriate command...
+//		send_client_command(&(coms->comclient), coms->prompt, coms->commands);
+		break;
+	default:
+		af_log_print(LOG_ERR, "%s: oops, unexpected status %d from client_read", __func__, status);
+		tcli.bailout = TRUE;
+		len = 0;
+		break;
+	}
+
+	// Handle any data we read from the sock
+	if ( len > 0 ) {
+		printf("received %i bytes : (0x)",len);
+		for ( i = 0; i < len; i++) {
+			printf(" %02x", (unsigned char)(*(buf+i)));
+		}
+		printf("\n");
+		fflush(stdout);
+		process_NetLink_message(&(coms->comclient), buf, &len);
+	}
+}
+
 int send_client_command(af_client_t *fd, char * prompt, char * command)
 {
 	int status;
@@ -729,7 +789,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 	cnx->raddr = raddr;
 	cnx->server = server;
 	cnx->client = client;
-	cnx->inout = 1;
+	cnx->inout = coms->inout;;
 
 	// Add to the server list
 	cnx->next = server->cnx;
