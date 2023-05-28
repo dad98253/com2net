@@ -2,18 +2,28 @@
 # com2net Linux daemon
 # 
 # bind telnet port to serial port for creating a console server.
+# bind a serial port to a telnet port to create a serial client connection
+# bind to a NetLink tcp command port (60000) or its serial port and provide a c based api to remotely control the power switch
+# (The NetLink Control System Communication Protocol was tested on a RLNK-SW815R-SP.)
 
-# requires: libappf
+# requires: libappf    (see https://github.com/dad98253/libappf)
+# Note: com2net uses an enhanced libappf - it's not compatable with Colin Whittaker's original version 
 # FILES:
 #  /etc/com2net.conf
 
 # Config file to establish mappings format
-# <tcp port #>,<serial device path>,speed,[<log file path>]
+# [<binding type>,]<tcp port #>,<serial device path>,speed,[<log file path>],[<hostname>],[<prompt>],[<command>]
 #
 # Example config:
 #
-3000,/dev/ttyCOM0,115200,/tmp/log/com0.log
 3001,/dev/ttyCOM1,115200,/tmp/log/com1.log
 3002,/dev/ttyCOM2,115200,/tmp/log/com2.log
-3003,/dev/ttyCOM3,115200,/tmp/log/com3.log
+in,3003,/dev/ttyCOM3,115200,/tmp/log/com3.log
+out,3000,/dev/ttyS0,2400,/tmp/log/com0.log,localhost,login: ,dad
+out,7300,/dev/ttyS0,2400,/tmp/log/com0b.log,dxc.kb2s.net,login: ,k9vav
+racklinks,60000,/dev/ttyS7,9600,/tmp/log/com8.log,localhost,"",password
+racklink,60000,"","",/tmp/log/com8.log,192.168.1.200,"","password"
+out,23,/dev/ttyS0,2400,/tmp/log/com0b.log,localhost,ogin: ,dad
+
+
 
