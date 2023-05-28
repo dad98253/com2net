@@ -3,8 +3,8 @@
 # 
 # bind telnet port to serial port for creating a console server.
 # bind a serial port to a telnet port to create a serial client connection
-# bind to a NetLink tcp command port (60000) or its serial port and provide a c based api to remotely control the power switch
-# (The NetLink Control System Communication Protocol was tested on a RLNK-SW815R-SP.)
+# bind to a RackLink tcp command port (60000) or its serial port and provide an api to remotely control the power switch
+# (The RackLink Control System Communication Protocol was tested on a RLNK-SW815R-SP.)
 
 # requires: libappf    (see https://github.com/dad98253/libappf)
 # Note: com2net uses an enhanced libappf - it's not compatable with Colin Whittaker's original version 
