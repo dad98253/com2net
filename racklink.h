@@ -5,12 +5,10 @@
  *      Author: dad
  */
 
-#ifndef NETLINK_H_
-#define NETLINK_H_
+#ifndef RACKLINK_H_
+#define RACKLINK_H_
 
 
-#ifndef INCMACS_H_
-#define INCMACS_H_
 
 #define CMD_VECTSIZE	256
 
@@ -96,11 +94,11 @@
 #define SET_SCMD				0x01
 #define GETSTATE_SCMD			0x02
 
-#endif  // INCMACS_H_
 
 
 
-// the NetLink call back function vector:
+
+// the RackLink call back function vector:
 typedef void (*CommandCallBack_t)(af_client_t *cl, int destination, int subcommand, unsigned char * data, int datasize );
 EXTERN CommandCallBack_t CommandCallBack[CMD_VECTSIZE] INITNULLVECTOR;
 EXTERN void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
@@ -108,13 +106,19 @@ EXTERN void Register_CommandCallBack(unsigned char command, CommandCallBack_t pt
 #define GET_CALLBACK(command) (CommandCallBack[command])
 
 
-EXTERN int send_NetLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize);
-EXTERN int send_NetLink_login(af_client_t *fd, char * password);
-EXTERN int process_NetLink_message(af_client_t *cl, char *buf, int *len);
-EXTERN int decode_NetLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket);
+EXTERN int send_RackLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize);
+EXTERN int send_RackLink_login(af_client_t *fd, char * password);
+EXTERN int process_RackLink_message(af_client_t *cl, char *buf, int *len);
+EXTERN int decode_RackLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket);
 EXTERN unsigned char * c2p ( const int i );
 
 EXTERN unsigned char ctempjk;
 EXTERN int retjk;
 
-#endif /* NETLINK_H_ */
+EXTERN unsigned char telnetServerMask[256] INITSZERO;
+EXTERN unsigned char telnetClientMask[256] INITSZERO;
+EXTERN unsigned char telnetTerminalMode[256] INITSZERO;
+EXTERN unsigned char telnetEditMode INITIZERO;
+EXTERN unsigned char RackLinkIsLoggedIn INITIZERO;
+
+#endif /* RACKLINK_H_ */

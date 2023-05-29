@@ -1,3 +1,4 @@
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif  // HAVE_CONFIG_H
@@ -9,9 +10,9 @@
 #ifdef HAVE_EXPLAIN_H
 #include <libexplain/libexplain.h>
 #endif  // HAVE_EXPLAIN_H
-#include "com2net.h"
 #define COM2NETBMAIN
-#include "netlink.h"
+#include "com2net.h"
+#include "racklink.h"
 
 #define VER_MAJOR 1
 #define VER_MINOR 0
@@ -26,10 +27,10 @@ int done=0;
 
 typedef struct _connect
 {
-	af_client_t *client;	/* af_client_t struct */
-	int busy;				/* server state: busy after command sent, idle once prompt detected */
-	unsigned int connect_timo;	/* connect timeout */
-	unsigned int cmd_timo;		/* command timeout */
+	af_client_t *client;	// af_client_t struct
+	int busy;				// server state: busy after command sent, idle once prompt detected
+	unsigned int connect_timo;	// connect timeout
+	unsigned int cmd_timo;		// command timeout
 } connect_t;
 
 
@@ -111,7 +112,6 @@ typedef struct _comport {
 int numcoms=0;
 comport coms[MAXCOMS];
 
-
 void c2m_new_cnx( af_server_cnx_t *cnx, void *context );
 void c2m_del_cnx( af_server_cnx_t *cnx );
 void c2m_cli( char *cmd, af_server_cnx_t *cnx );
@@ -124,6 +124,7 @@ void RackLink_com_port_handler( af_poll_t *ap );
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
 CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
 CommandCallBack_t ProcessPowerOutletStatus (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
+int CheckTelnetNegotiationStatus( int fd , unsigned char * outbuf );
 
 extern int termios(int fd);
 
@@ -568,8 +569,8 @@ int main( int argc, char **argv )
 			coms[i].comserver.fd = coms[i].comclient.sock;
 
 		} else if ( coms[i].inout == 2 ) {
-			af_client_temp = af_client_new( (char*)"NetLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
-			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"NetLink", coms[i].tcpport, coms[i].prompt );
+			af_client_temp = af_client_new( (char*)"RackLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
+			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"RackLink", coms[i].tcpport, coms[i].prompt );
 			coms[i].comclient = *af_client_temp;
 			coms[i].comserver.port = coms[i].tcpport;
 			coms[i].comserver.prompt = "";
@@ -578,19 +579,19 @@ int main( int argc, char **argv )
 			coms[i].comserver.new_connection_callback = com_new_cnx;
 			coms[i].comserver.new_connection_context = &coms[i];
 			coms[i].comserver.command_handler = com_handler;
-			coms[i].comclient.service = strdup ("NetLink");
+			coms[i].comclient.service = strdup ("RackLink");
 
 			af_server_start( &coms[i].comserver );
 //			coms[i].comserver.fd = coms[i].comclient.sock;
-			// This is a NetLink run
-			// set any required NetLink callback functions
+			// This is a RackLink run
+			// set any required RackLink callback functions
 			REGISTER_CALLBACK(PING_CMD, ProcessPing);
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
 
 
 		} else if ( coms[i].inout == 3 ) {
-			af_client_temp = af_client_new( (char*)"NetLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
-			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"NetLink", coms[i].tcpport, coms[i].prompt );
+			af_client_temp = af_client_new( (char*)"RackLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
+			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"RackLink", coms[i].tcpport, coms[i].prompt );
 			coms[i].comclient = *af_client_temp;
 			coms[i].comserver.port = coms[i].tcpport;
 			coms[i].comserver.prompt = "";
@@ -599,16 +600,14 @@ int main( int argc, char **argv )
 			coms[i].comserver.new_connection_callback = com_new_cnx;
 			coms[i].comserver.new_connection_context = &coms[i];
 			coms[i].comserver.command_handler = com_handler;
-			coms[i].comclient.service = strdup ("NetLink");
+			coms[i].comclient.service = strdup ("RackLink");
 
 			af_client_start( &coms[i] );
 			coms[i].comserver.fd = coms[i].comclient.sock;
-			// This is a NetLink run
-			// set any required NetLink callback functions
+			// This is a RackLink run
+			// set any required RackLink callback functions
 			REGISTER_CALLBACK(PING_CMD, ProcessPing);
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
-			// send the password
-			if ( send_NetLink_login(&(coms[i].comclient),coms[i].commands) ) return(0);
 
 		} else {
 			coms[i].comserver.port = coms[i].tcpport;
@@ -787,7 +786,7 @@ void RackLink_com_port_handler( af_poll_t *ap )
 //				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
 //					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
 					//               write to telnet port???
-				process_NetLink_message(client, buf, &len);
+				process_RackLink_message(client, buf, &len);
 //				}
 			}
 			// Log it
@@ -1020,7 +1019,8 @@ enum {
 	TELNET_NONE = 0,
 	TELNET_IAC = 1,
 	TELNET_OPT = 2,
-	TELNET_SUBOPT = 3
+	TELNET_SUBOPT = 3,
+	TELNET_SUBOPT_DATA = 4
 };
 
 int com_filter_telnet( void *extra, unsigned char *buf, int len )
@@ -1030,6 +1030,8 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 	unsigned char  obuf[2048];
 	char scratch[50];
 	int   olen = 0;
+	unsigned char	myWillDo = 0;	// Will = 0x08, Won't = 0x04, Do = 0x02, Don't = 0x01
+	unsigned char	isSubLinemode = 0;
 	// what follows will ignore all telnet option negotiation:
 	for ( i=0;i<len; i++ )
 	{
@@ -1040,6 +1042,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 			{
 				comp->telnet_state = TELNET_IAC;
 				strcpy(comp->decoded,(char*)"Telnet IAC " );
+				myWillDo = 0;
 			}
 			else
 			{
@@ -1058,18 +1061,22 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 			case 254:	// DON'T (option code)
 				strcat(comp->decoded,(char*)"Don\'t " );
 				comp->telnet_state = TELNET_OPT;
+				myWillDo = CLIENTDONT;
 				break;
 			case 253:	// DO (option code)
 				strcat(comp->decoded,(char*)"Do " );
 				comp->telnet_state = TELNET_OPT;
+				myWillDo = CLIENTDO;
 				break;
 			case 252:	// WON'T (option code)
 				strcat(comp->decoded,(char*)"Won\'t " );
 				comp->telnet_state = TELNET_OPT;
+				myWillDo = CLIENTWONT;
 				break;
 			case 251:	// WILL (option code)
 				strcat(comp->decoded,(char*)"Will " );
 				comp->telnet_state = TELNET_OPT;
+				myWillDo = CLIENTWILL;
 				break;
 			case 250:	// SB (Indicates that what follows is subnegotiation of the indicated option)
 				strcat(comp->decoded,(char*)"SB  (sub start) " );
@@ -1077,6 +1084,13 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				comp->telnet_state = TELNET_SUBOPT;
 				*(comp->decoded) = '\000';
 				break;
+			case 240:	// SE (Indicates end of subnegotiation)
+				strcat(comp->decoded,(char*)"SE  (end sub start) " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+				break;
+
 			default:
 				snprintf(scratch,50,"command 0x%x ", buf[i]);
 				strcat(comp->decoded,scratch );
@@ -1096,6 +1110,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[0] |= myWillDo;
 				break;
 			case 1:
 				//	Echo
@@ -1104,6 +1119,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[1] |= myWillDo;
 				break;
 			case 2:
 				//	Reconnection
@@ -1112,6 +1128,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[2] |= myWillDo;
 				break;
 			case 3:
 				//	Suppress Go Ahead
@@ -1120,6 +1137,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[3] |= myWillDo;
 				break;
 			case 5:
 				//	Status
@@ -1128,6 +1146,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[5] |= myWillDo;
 				break;
 			case 17:
 				//	Extended ASCII
@@ -1136,6 +1155,7 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[17] |= myWillDo;
 				break;
 			case 18:
 				// logout
@@ -1145,51 +1165,57 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
 				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[18] |= myWillDo;
 				break;
 			case 24:
 				// Terminal Type
 				strcat(comp->decoded,(char*)"Terminal Type  " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				*(comp->decoded) = '\000';
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
-				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+//				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+//				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[24] |= myWillDo;
 				break;
 			case 32:
 				// Terminal Speed
 				strcat(comp->decoded,(char*)"Terminal Speed  " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				*(comp->decoded) = '\000';
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
-				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+//				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+//				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[32] |= myWillDo;
 				break;
 			case 34:
 				// Linemode
 				strcat(comp->decoded,(char*)"Linemode  " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				*(comp->decoded) = '\000';
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
-				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+//				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+///				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[34] |= myWillDo;
 				break;
 			case 35:
 				//  Display Location
 				strcat(comp->decoded,(char*)"X Display Location  " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				*(comp->decoded) = '\000';
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
-				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+//				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+//				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[35] |= myWillDo;
 				break;
 			case 39:
 				//  New Environment
 				strcat(comp->decoded,(char*)"New Environment  " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				*(comp->decoded) = '\000';
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
-				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
+//				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client connected to %s has requested log out", comp->dev  );
+//				if ( comp->cnx != NULL ) af_server_disconnect(comp->cnx);
 				comp->telnet_state = TELNET_NONE;
+				telnetClientMask[39] |= myWillDo;
 				break;
 			default:
 				snprintf(scratch,50,"option 0x%x ", buf[i]);
@@ -1197,11 +1223,32 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
 				comp->telnet_state = TELNET_NONE;
 				*(comp->decoded) = '\000';
+				telnetClientMask[buf[i]] |= myWillDo;
 				break;
 			}
 			break;
 		case TELNET_SUBOPT:
-			if ( buf[i] == 240 )	// SE (End of subnegotiation parameters)
+			if ( buf[i] == 255 )	// SE (End of subnegotiation parameters)
+			{
+				strcat(comp->decoded,(char*)"SE (sub end) " );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_NONE;
+				*(comp->decoded) = '\000';
+			} else {
+				snprintf(scratch,50,"Sub opt for opt: 0x%x", buf[i]);
+				strcat(comp->decoded,scratch );
+				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
+				comp->telnet_state = TELNET_SUBOPT_DATA;
+				*(comp->decoded) = '\000';
+				if ( buf[i] == TEL_LINEMODE ) {
+					isSubLinemode = 1;
+				} else {
+					isSubLinemode = 0;
+				}
+			}
+			break;
+		case TELNET_SUBOPT_DATA:
+			if ( buf[i] == 255 )	// SE (End of subnegotiation parameters)
 			{
 				strcat(comp->decoded,(char*)"SE (sub end) " );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
@@ -1211,15 +1258,65 @@ int com_filter_telnet( void *extra, unsigned char *buf, int len )
 				snprintf(scratch,50,"Sub opt data: 0x%x", buf[i]);
 				strcat(comp->decoded,scratch );
 				af_log_print(APPF_MASK_SERVER+LOG_INFO,"%s", comp->decoded);
-				comp->telnet_state = TELNET_NONE;
+				comp->telnet_state = TELNET_SUBOPT_DATA;
 				*(comp->decoded) = '\000';
+				if ( isSubLinemode && buf[i] == TEL_MODE && ( buf[i+1] & TEL_EDITMODE ) ) {
+					telnetEditMode = 1;
+					isSubLinemode = 0;
+				}
 			}
 			break;
+
 		}
 	}
 	memcpy( buf, obuf, olen );
 
 	return olen;
+}
+
+int CheckTelnetNegotiationStatus( int fd , unsigned char * outbuf ) {
+	int i;
+	int status;
+	int uncooperative = 0;
+	// client: Will = 0x08, Won't = 0x04, Do = 0x02, Don't = 0x01
+	// Server: Will = 0x80, Won't = 0x40, Do = 0x20, Don't = 0x10
+	for (i=0;i<256;i++) {
+		if ( telnetServerMask[i] ) {
+			// check if the client is submissive
+			if ( (telnetServerMask[i] & SERVERDO)   && !(telnetClientMask[i] & CLIENTWILL) ) uncooperative++;
+			if ( (telnetServerMask[i] & SERVERDO)   &&  (telnetClientMask[i] & CLIENTWILL) ) {
+				// process command callback if any
+				if ( CommandCallBack[i] ) GET_TELNET_CALLBACK(i) ( 1, telnetTerminalMode[i], &status );
+				telnetTerminalMode[i] = 1;
+			}
+			if ( (telnetServerMask[i] & SERVERDONT) && !(telnetClientMask[i] & CLIENTWONT) ) uncooperative++;
+			if ( (telnetServerMask[i] & SERVERDONT) &&  (telnetClientMask[i] & CLIENTWONT) )  {
+				// process command callback if any
+				if ( CommandCallBack[i] ) GET_TELNET_CALLBACK(i) ( 0, telnetTerminalMode[i], &status );
+				telnetTerminalMode[i] = 0;
+			}
+		}
+	}
+	for (i=0;i<256;i++) {
+		if ( telnetClientMask[i] ) {
+			// check if the client is submissive
+			if ( (telnetClientMask[i] & CLIENTDO)   && !(telnetServerMask[i] & SERVERWILL) ) uncooperative++;
+			if ( (telnetClientMask[i] & CLIENTDO)   &&  (telnetServerMask[i] & SERVERWILL) ) {
+				// process command callback if any
+				if ( CommandCallBack[i] ) GET_TELNET_CALLBACK(i) ( 1, telnetTerminalMode[i], &status );
+				telnetTerminalMode[i] = 1;
+			}
+			if ( (telnetClientMask[i] & CLIENTDONT) && !(telnetServerMask[i] & SERVERWONT) ) uncooperative++;
+			if ( (telnetClientMask[i] & CLIENTDONT) &&  (telnetServerMask[i] & SERVERWONT) ) {
+				// process command callback if any
+				if ( CommandCallBack[i] ) GET_TELNET_CALLBACK(i) ( 0, telnetTerminalMode[i], &status );
+				telnetTerminalMode[i] = 0;
+			}
+		}
+	}
+	if ( uncooperative == 0 && telnetEditMode ) af_log_print( APPF_MASK_SERVER+LOG_INFO, "telnet terminals are cooperating");
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////xxxxxxx
+	return(0);
 }
 
 void com_handle_event( af_poll_t *ap )
@@ -1322,6 +1419,19 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 
 			// filter telnet data out
 			len = com_filter_telnet( comp, buf, len );
+			CheckTelnetNegotiationStatus( ap->fd , outbuf );
+			if ( RackLinkIsLoggedIn < 1 ) {
+				// strip \n\r
+				ptr = strtok( (char *)buf, " \t\n\r" );
+				// send the password
+				if ( send_RackLink_login( &(comp->comclient), ptr) ) {
+					fprintf( cnx->fh, "RackLink send Failed on com port %s\r\n\n\nBYE!\r\n", comp->dev );
+					af_server_disconnect(cnx);
+					return;
+				}
+				RackLinkIsLoggedIn = -1;	// it won't be set positive until the login succeeds
+				len = 0;					// short circuit further processing
+			}
 //	look for a valid RackLink command:
 // HELP
 // LOGOUT
@@ -1330,8 +1440,8 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 // OFF <Outlet Number>
 ////////////////////////////////////////////////////////////////////////////////
 
-			if ( len == 0 || strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
-				iret = sprintf((char *)outbuf, "RackLink commands are:\r\nHELP\r\nLOGOUT\r\nSTATUS\r\nON <Outlet Number>\r\nOFF <Outlet Number>\r\n");
+			if ( len == 2 || strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
+				iret = sprintf((char *)outbuf, "RackLink commands are:\r\n\tHELP\r\n\tLOGOUT\r\n\tSTATUS\r\n\tON <Outlet Number>\r\n\tOFF <Outlet Number>\r\n");
 				*(outbuf+iret) = '\000';
 				if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
 #ifdef HAVE_EXPLAIN_H
@@ -1348,14 +1458,14 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				}
 
 				if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
-					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
+					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
 				}
 
 
@@ -1386,13 +1496,22 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 					}
 					envelope[0] = (unsigned char)Outlet;
 					envelope[1] = (unsigned char)(OnOrOff -1);
-					send_NetLink_command(af, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
+					send_RackLink_command(af, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
 				}
 			}
 		}
-	}
-	else if ( ap->revents )
-	{
+		if ( RackLinkIsLoggedIn > 0 ) {
+			iret = sprintf((char *)outbuf, "RackLink>");
+			*(outbuf+iret) = '\000';
+			if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+				fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+				fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+			}
+		}
+	} else if ( ap->revents ) {
 		// Anything but POLLIN is an error.
 		af_log_print( APPF_MASK_SERVER+LOG_INFO, "dcli socket error, revents: %d", ap->revents );
 		af_server_disconnect(cnx);
@@ -1404,6 +1523,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	char         buf[128];
 	comport     *comp = (comport *)context;
 	int 		 iret = 0;
+	int			 buflen = 0;
 
 	// If another client is connected, get rid of him.
 	if ( comp->cnx != NULL )
@@ -1417,7 +1537,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	af_poll_rem( cnx->fd );
 
 	cnx->inout = comp->inout;
-	if ( cnx->inout != 3 ) {	// don't open a com port if this is a NetLink connect via TCP
+	if ( cnx->inout != 3 ) {	// don't open a com port if this is a RackLink connect via TCP
 	// Open the comport if it is not open
 		if ( comp->fd < 0 )
 		{
@@ -1426,15 +1546,6 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 				fprintf( cnx->fh, "Failed to open com port %s\r\n\n\nBYE!\r\n", comp->dev );
 				af_server_disconnect(cnx);
 				return;
-			} else {
-				if ( cnx->inout == 2 ) {
-					// send the password
-					if ( send_NetLink_login(&(comp->comclient),comp->commands) ) {
-						fprintf( cnx->fh, "NetLink login Failed on com port %s\r\n\n\nBYE!\r\n", comp->dev );
-						af_server_disconnect(cnx);
-						return;
-					}
-				}
 			}
 		}
 
@@ -1467,26 +1578,56 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	cnx->user_data = comp;
 	cnx->disconnect_callback = com_del_cnx;
 
-	// see RFC 2355 and RFC 854:
-	buf[0] = 0xff;
-	buf[1] = 0xfb;	// Will
-	buf[2] = 0x03;	// Confirm willingness to negotiate suppress go ahead
-	buf[3] = 0xff;
-	buf[4] = 0xfb;	// Will
-	buf[5] = 0x01;	// Confirm willingness to negotiate echo
-	buf[6] = 0xff;
-	buf[7] = 0xfe;	// Don't
-	buf[8] = 0x01;	// Confirmation that you are no longer expecting the other party to echo
-	buf[9]  = 0xff;
-	buf[10] = 0xfd;	// Do
-	buf[11] = 0x00;	// Confirmation that you are expecting the other party to use Binary transmission
+	if ( cnx->inout == 2 ) {		//  RackLink telnet connections will use line mode:
+		// see RFC 2355 and RFC 854:
+/*		buf[0] = IAC;
+		buf[1] = WILL;	// Will
+		buf[2] = TEL_SUPRESSGOAHEAD;	// Confirm willingness to negotiate suppress go ahead
+		telnetServerMask[TEL_SUPRESSGOAHEAD] |= SERVERWILL;	// Will = 0x80, Won't = 0x40, Do = 0x20, Don't = 0x10
+		buf[3] = IAC;
+		buf[4] = WILL;	// Do
+		buf[5] = TEL_LINEMODE;	// Confirmation that you are expecting the other party to use line mode
+		telnetServerMask[TEL_LINEMODE] |= SERVERDO;
+		buf[6] = IAC;
+		buf[7] = WONT;	// Do
+		buf[8] = TEL_ECHO;	// Confirmation that you are expecting the other party to echo
+		telnetServerMask[TEL_ECHO] |= SERVERDO;
+		buf[9]  = IAC;
+		buf[10] = DO;	// Do
+		buf[11] = TEL_BINARY;	// Confirmation that you are expecting the other party to use Binary transmission
+		telnetServerMask[TEL_BINARY] |= SERVERDO;
+		buflen = 12; */
+		buflen = sprintf(buf,"Password:");
+		buf[buflen] = '\000';
 
-	if ( ( iret = write( cnx->fd, buf, 12 ) ) == -1 ) {		// going out to the newly connected telnet client
+	} else {					// all other type of telnet connections
+		buf[0] = IAC;
+		buf[1] = WILL;	// Will
+		buf[2] = TEL_SUPRESSGOAHEAD;	// Confirm willingness to negotiate suppress go ahead
+		telnetServerMask[TEL_SUPRESSGOAHEAD] |= SERVERWILL;
+		buf[3] = IAC;
+		buf[4] = WILL;	// Will
+		buf[5] = TEL_ECHO;	// Confirm willingness to negotiate echo
+		telnetServerMask[TEL_ECHO] |= SERVERWILL;
+		buf[6] = IAC;
+		buf[7] = DONT;	// Don't
+		buf[8] = TEL_ECHO;	// Confirmation that you are no longer expecting the other party to echo
+		telnetServerMask[TEL_ECHO] |= SERVERDONT;
+		buf[9]  = IAC;
+		buf[10] = DO;	// Do
+		buf[11] = TEL_BINARY;	// Confirmation that you are expecting the other party to use Binary transmission
+		telnetServerMask[TEL_BINARY] |= SERVERDO;
+		buflen = 12;
+	}
+
+	if (buflen ) {
+		if ( ( iret = write( cnx->fd, buf, buflen ) ) == -1 ) {		// going out to the newly connected telnet client
 #ifdef HAVE_EXPLAIN_H
-		fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, explain_write(cnx->fd, buf, 12 ) );
+			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, explain_write(cnx->fd, buf, buflen ) );
 #else	//  HAVE_EXPLAIN_H
-		fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
 #endif	//  HAVE_EXPLAIN_H
+		}
 	}
 
 	
@@ -1501,21 +1642,51 @@ void com_handler( char *cmd, af_server_cnx_t *cnx )
 
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr) {
 	CommandCallBack[command] = ptr;
-	printf("Callback routine registered for NetLink command number 0x%02x\n", command);
+	printf("Callback routine registered for RackLink command number 0x%02x\n", command);
+}
+
+
+CommandCallBack_t ProcessLogin (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+	char	buf[256];
+	int buflen = 0;
+	int iret;
+	comport *coms = (comport*)fd->extra_data;
+	// login/response
+	if ( subcommand == 0x10 && datasize == 4) {
+		if ( *envelope == 0 ) {
+			buflen = sprintf( buf, "login rejected...\ntry again.\nPassword:");
+		} else if ( *envelope == 1 ) {
+			buflen = sprintf( buf, "login successful...\nRackLink>");
+		} else {
+			buflen = sprintf( buf, "unrecognized login response...\nPossibly a connection problem. Try again.\nPassword:");
+		}
+		buf[buflen] = '\000';
+	}
+
+	if (buflen ) {
+		if ( ( iret = write( coms->cnx->fd, buf, buflen ) ) == -1 ) {		// going out to the newly connected telnet client
+#ifdef HAVE_EXPLAIN_H
+			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, explain_write(coms->cnx->fd, buf, buflen ) );
+#else	//  HAVE_EXPLAIN_H
+			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+		}
+	}
+	return(0);
 }
 
 CommandCallBack_t ProcessPing (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	// let's interogate switch settings on each ping...
 	if ( subcommand == 1 ) {
 		printf("Interrogating Power Outlet status...\n");
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(3), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(4), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(5), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
-		send_NetLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(3), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(4), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(5), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
+		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
 	}
 	return(0);
 }
@@ -1536,7 +1707,7 @@ ret1:
 
 unsigned char * c2p ( const int i ) { ctempjk = (unsigned char)i; return(&ctempjk);}
 
-int send_NetLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize) {
+int send_RackLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize) {
 	unsigned int sum = 0;
 	unsigned char * datapacket;
 	unsigned char * ptr;
@@ -1573,7 +1744,7 @@ int send_NetLink_command(af_client_t *fd, int destination,int command,int subcom
 
 
 
-		af_log_print(LOG_DEBUG, "%s: sending NetLink command \"%i\", sub command \"%i\" to %i with %i data bytes", __func__, command, subcommand, destination, datasize );
+		af_log_print(LOG_DEBUG, "%s: sending RackLink command \"%i\", sub command \"%i\" to %i with %i data bytes", __func__, command, subcommand, destination, datasize );
 
 		// show user the command we're sending unless suppressed
 		if (tcli.opt.hide_prompt == FALSE)
@@ -1616,12 +1787,12 @@ int send_NetLink_command(af_client_t *fd, int destination,int command,int subcom
 	return(exitval);
 }
 
-int send_NetLink_login(af_client_t *fd, char * password) {
+int send_RackLink_login(af_client_t *fd, char * password) {
 	char * userpassword = NULL;
 	userpassword = (char*)malloc(strlen(password)+7);
 	strcpy(userpassword,"user|");
 	strcat(userpassword,password);
-	if ( send_NetLink_command(fd,0,LOGIN_CMD,SET_SCMD,(unsigned char *)userpassword, strlen(userpassword)) ) {
+	if ( send_RackLink_command(fd,0,LOGIN_CMD,SET_SCMD,(unsigned char *)userpassword, strlen(userpassword)) ) {
 		free(userpassword);
 		return(1);
 	}
@@ -1629,7 +1800,7 @@ int send_NetLink_login(af_client_t *fd, char * password) {
 	return(0);
 }
 
-int process_NetLink_message(af_client_t *cl, char *buf, int *len) {
+int process_RackLink_message(af_client_t *cl, char *buf, int *len) {
 	int destination,command,subcommand,datasize;
 	unsigned char *envelope;
 	unsigned char *nextpacket;
@@ -1640,7 +1811,7 @@ int process_NetLink_message(af_client_t *cl, char *buf, int *len) {
 	templen = *len;
 
 	while ( iret < 0 ) {
-		iret = decode_NetLink_command( &destination, &command, &subcommand, (unsigned char *)tempbuf, (unsigned int)(templen), &envelope, &datasize, &nextpacket);
+		iret = decode_RackLink_command( &destination, &command, &subcommand, (unsigned char *)tempbuf, (unsigned int)(templen), &envelope, &datasize, &nextpacket);
 		if ( iret > 0 ) return(iret);
 		printf( " destination, command, subcommand - %i, %i, %i\n",destination, command, subcommand);
 		switch ( (unsigned char)command )
@@ -1688,7 +1859,7 @@ int process_NetLink_message(af_client_t *cl, char *buf, int *len) {
 					if ( subcommand == 1 ) {
 						printf("Ping...(Sending Pong)\n");
 						// send Pong
-						send_NetLink_command(cl,0,0x01,0x10,(unsigned char *)"", 0);
+						send_RackLink_command(cl,0,0x01,0x10,(unsigned char *)"", 0);
 					}
 					break;
 				case LOGIN_CMD :	// login/response
@@ -1797,7 +1968,7 @@ int process_NetLink_message(af_client_t *cl, char *buf, int *len) {
 	return(1);
 }
 
-int decode_NetLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket) {
+int decode_RackLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket) {
 	unsigned int sum = 0;
 	unsigned char * datapacket;
 	unsigned char chksum;
@@ -1806,7 +1977,7 @@ int decode_NetLink_command(int *destination,int *command,int *subcommand,unsigne
 	*nextpacket = NULL;
 
 	if ( len < 7 ) {					// minimum length
-		printf ("Not a NetLink message\n");
+		printf ("Not a RackLink message\n");
 		return(1);
 	}
 	*datasize = (int)(*(raw+1));			// datasize
@@ -1824,11 +1995,11 @@ int decode_NetLink_command(int *destination,int *command,int *subcommand,unsigne
 		return(2);
 	}
 	if ( *raw != 0xfe ) {					// header
-		printf ("Bad NetLink message header\n");
+		printf ("Bad RackLink message header\n");
 		return(3);
 	}
 	if ( *(raw+packetsize+1) != 0xff ) {	// tail
-		printf ("Bad NetLink message tail character\n");
+		printf ("Bad RackLink message tail character\n");
 		return(4);
 	}
 	if ( *(raw+1) != (unsigned char)( len - 4 ) ) {	// length

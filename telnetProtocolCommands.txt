@@ -1,7 +1,7 @@
 Telnet commands and options
 
 Last Updated: 2021-06-25
-For information about Telnet connection negotiations, see RFC 2355. Table 1 describes the Telnet commands from RFC 854, when the codes and code sequences are preceded by an IAC. For more information about Telnet commands, see RFC 854.
+For information about Telnet line mode connection negotiations, see RFC 1184. Table 1 describes the Telnet commands from RFC 854, when the codes and code sequences are preceded by an IAC. For more information about Telnet commands, see RFC 854.
 
 Table 1. Telnet commands from RFC 854
 
