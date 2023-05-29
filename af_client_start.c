@@ -789,7 +789,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 	cnx->raddr = raddr;
 	cnx->server = server;
 	cnx->client = client;
-	cnx->inout = coms->inout;;
+	cnx->inout = coms->inout;
 
 	// Add to the server list
 	cnx->next = server->cnx;

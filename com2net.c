@@ -1,6 +1,14 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif  // HAVE_CONFIG_H
+
+
 
 #include "appf.h"
 #include <termios.h>
+#ifdef HAVE_EXPLAIN_H
+#include <libexplain/libexplain.h>
+#endif  // HAVE_EXPLAIN_H
 #include "com2net.h"
 #define COM2NETBMAIN
 #include "netlink.h"
@@ -110,6 +118,8 @@ void c2m_cli( char *cmd, af_server_cnx_t *cnx );
 void com_new_cnx( af_server_cnx_t *cnx, void *context );
 void com_del_cnx( af_server_cnx_t *cnx );
 void com_handler( char *cmd, af_server_cnx_t *cnx );
+void com_port_handler( af_poll_t *ap );
+void RackLink_com_port_handler( af_poll_t *ap );
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
 CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
 CommandCallBack_t ProcessPowerOutletStatus (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
@@ -368,8 +378,13 @@ void c2m_read_config( char *conffile )
 			stripquotes(&logfile);
 			logfh = fopen( logfile, "a+" );
 			if ( logfh == NULL ) {
-				fprintf(stderr, "log file %s could not be opened: errno %d (%s)",\
+#ifdef HAVE_EXPLAIN_H
+				fprintf(stderr, "log file %s could not be opened: errno %d (%s)\n",\
+						logfile, errno, explain_fopen(logfile, "a+") );
+#else	//  HAVE_EXPLAIN_H
+				fprintf(stderr, "log file %s could not be opened: errno %d (%s)\n",\
 						logfile, errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
 				logfile = NULL;
 			}
 			ptr = strtok( NULL, ", \t\n\r" );
@@ -493,6 +508,11 @@ int main( int argc, char **argv )
 		}
 	}
 
+#ifdef HAVE_EXPLAIN_H
+	explain_program_name_set(mydaemon.appname);
+	explain_option_hanging_indent_set(4);
+#endif	// 	HAVE_EXPLAIN_H
+
 	c2m_read_config( conffile );
 	
 	af_daemon_set( &mydaemon );
@@ -559,8 +579,13 @@ int main( int argc, char **argv )
 			coms[i].comserver.command_handler = com_handler;
 			coms[i].comclient.service = strdup ("NetLink");
 
-			af_client_start( &coms[i] );
-			coms[i].comserver.fd = coms[i].comclient.sock;
+			af_server_start( &coms[i].comserver );
+//			coms[i].comserver.fd = coms[i].comclient.sock;
+			// This is a NetLink run
+			// set any required NetLink callback functions
+			REGISTER_CALLBACK(PING_CMD, ProcessPing);
+			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
+
 
 		} else if ( coms[i].inout == 3 ) {
 			af_client_temp = af_client_new( (char*)"NetLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
@@ -671,9 +696,13 @@ void com_port_handler( af_poll_t *ap )
 		{
 			if ( errno != EAGAIN || len == 0 )
 			{
+#ifdef HAVE_EXPLAIN_H
+				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
+					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1 ) );
+#else	// HAVE_EXPLAIN_H
 				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
 					ap->fd, errno, strerror(errno)  );
-
+#endif	// HAVE_EXPLAIN_H
 				af_poll_rem( ap->fd );
 				com_port_close( comp );
 			}
@@ -688,7 +717,12 @@ void com_port_handler( af_poll_t *ap )
 			if ( comp->cnx )
 			{
 				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, explain_read(comp->cnx->fd, buf, len) );
+#else	//  HAVE_EXPLAIN_H
 					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+					//               write to telnet port???
+#endif	//  HAVE_EXPLAIN_H
 				}
 			}
 			// Log it
@@ -708,6 +742,82 @@ void com_port_handler( af_poll_t *ap )
 	}
 }
 
+void RackLink_com_port_handler( af_poll_t *ap )
+{
+	int              len = 0;
+	char             buf[2048];
+	char             dumpbuf[9000];
+	int 			 lastchr;
+	int 			 morechr;
+	int				 i;
+	comport         *comp = (comport *)ap->context;
+	af_client_t		*client = &(comp->comclient);
+	int				 iret = 0;
+
+	if ( ap->revents & POLLIN )
+	{
+		len = read( ap->fd, buf, sizeof(buf)-1 );
+
+		// Handle read errors
+		if ( len <= 0 )
+		{
+			if ( errno != EAGAIN || len == 0 )
+			{
+#ifdef HAVE_EXPLAIN_H
+				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
+					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
+#else	//  HAVE_EXPLAIN_H
+				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
+					ap->fd, errno, strerror(errno)  );
+#endif	//  HAVE_EXPLAIN_H
+				af_poll_rem( ap->fd );
+				com_port_close( comp );
+			}
+		}
+		else
+		{
+			// terminate the read data
+			buf[len] = 0;
+
+			af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "com to telnet %d", len );
+			// Send data to the client
+			if ( comp->cnx )
+			{
+//				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
+//					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+					//               write to telnet port???
+				process_NetLink_message(client, buf, &len);
+//				}
+			}
+			// Log it
+			if ( comp->logfh )
+			{
+				lastchr = sprintf(dumpbuf, "received %i bytes : (0x)",len);
+				for ( i = 0; i < len; i++) {
+					morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(buf+i)));
+					lastchr += morechr;
+				}
+				morechr = sprintf(dumpbuf+lastchr,"\n");
+				lastchr += morechr;
+				*(dumpbuf+lastchr) = '\000';
+
+				fflush(stdout);
+				iret = fwrite( buf, sizeof(char), lastchr+1, comp->logfh );
+				if ( iret < lastchr ) {
+					af_log_print( LOG_ERR, "fwrite in %s failed - returned %i when %i was expected", __func__ , iret, lastchr );
+				}
+				fflush( comp->logfh );
+			}
+		}
+	}
+	else if ( ap->revents )
+	{
+		// Anything but POLLIN is an error.
+		af_log_print( APPF_MASK_SERVER+LOG_INFO, "com error, revents: %d", ap->revents );
+		af_poll_rem( ap->fd );
+		com_port_close( comp );
+	}
+}
 
 int com_set_port(int fd, int speed, int parity)
 {
@@ -729,7 +839,11 @@ int com_set_port(int fd, int speed, int parity)
 	memset (&tty, 0, sizeof tty);
 // get a copy of the current com port attributes
 	if ( tcgetattr (fd, &tty) ) {
+#ifdef HAVE_EXPLAIN_H
+        af_log_print( LOG_ERR, "tcgetattr error %d on file descriptor %i ... %s", errno, fd , explain_errno_tcgetattr(errno, fd, &tty));
+#else	// HAVE_EXPLAIN_H
 		af_log_print( LOG_ERR, "tcgetattr error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
+#endif  // HAVE_EXPLAIN_H
 		return -1;
 	}
 // set the comm port attributes to a known state (this will likely whipe out most, if not all, of the settings)
@@ -851,7 +965,11 @@ int com_set_port(int fd, int speed, int parity)
 
 	if ( tcsetattr (fd, TCSANOW, &tty) != 0 )
 	{
+#ifdef HAVE_EXPLAIN_H
+		af_log_print( LOG_ERR, "tcsetattr error %d : %s", errno, explain_tcsetattr(fd, TCSANOW, &tty) );
+#else	//  HAVE_EXPLAIN_H
 		af_log_print( LOG_ERR, "tcsetattr error %d (%s) on file descriptor %i", errno, strerror(errno), fd );
+#endif	//  HAVE_EXPLAIN_H
 		return -1;
 	}
 
@@ -863,7 +981,11 @@ int open_comport( comport *comp )
 	comp->fd = open( comp->dev, O_RDWR | O_NOCTTY | O_SYNC );
 	if ( comp->fd < 0 )
 	{
+#ifdef HAVE_EXPLAIN_H
+		af_log_print( LOG_ERR, "Failed to open com port %s, errno %d (%s)", comp->dev, errno, explain_open(comp->dev, O_RDWR | O_NOCTTY | O_SYNC, 0) );
+#else	//  HAVE_EXPLAIN_H
 		af_log_print( LOG_ERR, "Failed to open com port %s, errno %d (%s)", comp->dev, errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
 		return -1;
 	} else {
 		af_log_print( LOG_DEBUG, "Opened com port %s (fd=%d)", comp->dev, comp->fd );
@@ -1117,9 +1239,13 @@ void com_handle_event( af_poll_t *ap )
 		{
 			if ( errno != EAGAIN || len == 0 )
 			{
+#ifdef HAVE_EXPLAIN_H
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
+#else	//  HAVE_EXPLAIN_H
 				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
 					ap->fd, errno, strerror(errno)  );
-
+#endif	//  HAVE_EXPLAIN_H
 				af_server_disconnect(cnx);
 			}
 		}
@@ -1134,7 +1260,11 @@ void com_handle_event( af_poll_t *ap )
 			len = com_filter_telnet( comp, buf, len );
 
 			if ( ( iret = write( comp->fd, buf, len ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+				fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, explain_write(comp->fd, buf, len) );
+#else	//  HAVE_EXPLAIN_H
 				fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
 			}
 
 		}
@@ -1164,6 +1294,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	// get rid of the stock handler
 	af_poll_rem( cnx->fd );
 
+	cnx->inout = comp->inout;
 	if ( cnx->inout != 3 ) {	// don't open a com port if this is a NetLink connect via TCP
 	// Open the comport if it is not open
 		if ( comp->fd < 0 )
@@ -1173,12 +1304,25 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 				fprintf( cnx->fh, "Failed to open com port %s\r\n\n\nBYE!\r\n", comp->dev );
 				af_server_disconnect(cnx);
 				return;
+			} else {
+				if ( cnx->inout == 2 ) {
+					// send the password
+					if ( send_NetLink_login(&(comp->comclient),comp->commands) ) {
+						fprintf( cnx->fh, "NetLink login Failed on com port %s\r\n\n\nBYE!\r\n", comp->dev );
+						af_server_disconnect(cnx);
+						return;
+					}
+				}
 			}
 		}
 
 		comp->cnx = cnx;
 
-		if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
+		if ( cnx->inout == 2 ) {
+			if (af_poll_add( comp->fd, POLLIN, RackLink_com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
+		} else {
+			if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
+		}
 	}
 	if ( cnx->inout == 1 ) {
 		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
@@ -1206,7 +1350,11 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	buf[11] = 0x00;	// Confirmation that you are expecting the other party to use Binary transmission
 
 	if ( ( iret = write( cnx->fd, buf, 12 ) ) == -1 ) {		// going out to the newly connected telnet client
+#ifdef HAVE_EXPLAIN_H
+		fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, explain_write(cnx->fd, buf, 12 ) );
+#else	//  HAVE_EXPLAIN_H
 		fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
 	}
 
 	
