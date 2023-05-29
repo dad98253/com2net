@@ -124,6 +124,7 @@ void RackLink_com_port_handler( af_poll_t *ap );
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
 CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
 CommandCallBack_t ProcessPowerOutletStatus (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
+CommandCallBack_t ProcessLogin (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize );
 int CheckTelnetNegotiationStatus( int fd , unsigned char * outbuf );
 
 extern int termios(int fd);
@@ -587,7 +588,7 @@ int main( int argc, char **argv )
 			// set any required RackLink callback functions
 			REGISTER_CALLBACK(PING_CMD, ProcessPing);
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
-
+			REGISTER_CALLBACK(LOGIN_CMD, ProcessLogin);
 
 		} else if ( coms[i].inout == 3 ) {
 			af_client_temp = af_client_new( (char*)"RackLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
