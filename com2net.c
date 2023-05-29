@@ -119,6 +119,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context );
 void com_del_cnx( af_server_cnx_t *cnx );
 void com_handler( char *cmd, af_server_cnx_t *cnx );
 void com_port_handler( af_poll_t *ap );
+void handle_RackLink_server_socket_event( af_poll_t *ap );
 void RackLink_com_port_handler( af_poll_t *ap );
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
 CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
@@ -625,7 +626,7 @@ int main( int argc, char **argv )
 		af_log_print(LOG_ERR, "No servers or clients specified; nothing to do." );
 		return 1;
 	} else {
-		af_log_print(LOG_INFO, "Starting %i connections.",numcoms );
+		af_log_print(LOG_INFO, "Starting %i comm services.",numcoms );
 	}
 
 	while ( !done )
@@ -1277,6 +1278,127 @@ void com_handle_event( af_poll_t *ap )
 	}
 }
 
+void handle_RackLink_server_socket_event( af_poll_t *ap )
+{
+	int              len = 0;
+	int				 numout;
+	unsigned char    buf[2048];
+	unsigned char    outbuf[2048];
+	char *			 ptr;
+	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
+	comport *comp = (comport *)cnx->user_data;
+	af_client_t *af = &(comp->comclient);
+	int				 iret;
+	int				 OnOrOff;
+	int				 Outlet;
+	unsigned char	 envelope[2];
+
+
+	if ( ap->revents & POLLIN )
+	{
+		len = read( ap->fd, buf, sizeof(buf)-1 );
+
+		// Handle read errors
+		if ( len <= 0 )
+		{
+			if ( errno != EAGAIN || len == 0 )
+			{
+#ifdef HAVE_EXPLAIN_H
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
+#else	//  HAVE_EXPLAIN_H
+				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+					ap->fd, errno, strerror(errno)  );
+#endif	//  HAVE_EXPLAIN_H
+				af_server_disconnect(cnx);
+			}
+		}
+		else
+		{
+			// terminate the read data
+			buf[len] = 0;
+
+			af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "telnet to RackLink com %d -> [%s]", len, buf );
+
+			// filter telnet data out
+			len = com_filter_telnet( comp, buf, len );
+//	look for a valid RackLink command:
+// HELP
+// LOGOUT
+// STATUS
+// ON <Outlet Number>
+// OFF <Outlet Number>
+////////////////////////////////////////////////////////////////////////////////
+
+			if ( len == 0 || strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
+				iret = sprintf((char *)outbuf, "RackLink commands are:\r\nHELP\r\nLOGOUT\r\nSTATUS\r\nON <Outlet Number>\r\nOFF <Outlet Number>\r\n");
+				*(outbuf+iret) = '\000';
+				if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+					fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+					fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+				}
+			}
+
+			if ( len > 3 ) {
+				if ( strncmp ((char *)buf,(char *)"LOGOUT",6) == 0 ) {
+					af_server_disconnect(cnx);
+				}
+
+				if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
+					send_NetLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
+				}
+
+
+				*(buf+80) = '\000';		// make sure its terminated someplace
+				ptr = strtok( (char *)buf, ", \t\n\r" );
+				if (strncmp(ptr,(char *) "OFF",3) == 0) {
+					OnOrOff = 1;
+					ptr = strtok( NULL, ", \t\n\r" );
+				} else if (strncmp(ptr,(char *) "ON",2) == 0) {
+					OnOrOff = 2;
+					ptr = strtok( NULL, ", \t\n\r" );
+				} else {
+					OnOrOff = 0;
+				}
+				if ( OnOrOff ) {
+					Outlet = atoi( ptr );
+					if ( (Outlet < 1) || (Outlet > 8) ) {
+						iret = sprintf((char *)outbuf, "Bad Outlet number %s\n", ptr );
+						*(outbuf+iret) = '\000';
+						if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+							fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+							fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+						}
+						return;
+					}
+					envelope[0] = (unsigned char)Outlet;
+					envelope[1] = (unsigned char)(OnOrOff -1);
+					send_NetLink_command(af, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
+				}
+			}
+		}
+	}
+	else if ( ap->revents )
+	{
+		// Anything but POLLIN is an error.
+		af_log_print( APPF_MASK_SERVER+LOG_INFO, "dcli socket error, revents: %d", ap->revents );
+		af_server_disconnect(cnx);
+	}
+}
+
 void com_new_cnx( af_server_cnx_t *cnx, void *context )
 {
 	char         buf[128];
@@ -1324,13 +1446,23 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 			if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
 		}
 	}
-	if ( cnx->inout == 1 ) {
-		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
-	} else if ( cnx->inout > 1 ) {
-		if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_raw_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
-	}else {
-		if (af_poll_add( cnx->fd, POLLIN, com_handle_event, cnx ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, cnx->fd, POLLIN );
+
+	switch ( cnx->inout )
+	{
+		case 1 :
+			if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for telnet client event = 0x%x", __func__, cnx->fd, POLLIN );
+			break;
+		case 2 :
+			if (af_poll_add( cnx->fd, POLLIN, handle_RackLink_server_socket_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for RackLink telnet server event = 0x%x", __func__, cnx->fd, POLLIN );
+			break;
+		case 3 :
+			if (af_poll_add( cnx->fd, POLLIN, handle_server_socket_raw_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for RackLink telnet client event = 0x%x", __func__, cnx->fd, POLLIN );
+			break;
+		default :
+			if (af_poll_add( cnx->fd, POLLIN, com_handle_event, cnx ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for telnet server event = 0x%x", __func__, cnx->fd, POLLIN );
+			break;
 	}
+
 	// Set user data.
 	cnx->user_data = comp;
 	cnx->disconnect_callback = com_del_cnx;
@@ -1362,6 +1494,9 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 
 void com_handler( char *cmd, af_server_cnx_t *cnx )
 {
+	int i = 0;
+	i++;
+	if(i>1000) i=0;
 }
 
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr) {

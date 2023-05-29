@@ -94,6 +94,7 @@
 #define ACCESSDENIED_ERR		0x11
 
 #define SET_SCMD				0x01
+#define GETSTATE_SCMD			0x02
 
 #endif  // INCMACS_H_
 
