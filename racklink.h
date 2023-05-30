@@ -96,19 +96,26 @@
 
 
 
+typedef struct RackLinkSendPort
+{
+	af_client_t *fd;
+    int comfd;
+    int inout;
+} rlsendport_t;
+
 
 
 // the RackLink call back function vector:
-typedef void (*CommandCallBack_t)(af_client_t *cl, int destination, int subcommand, unsigned char * data, int datasize );
+typedef void (*CommandCallBack_t)(rlsendport_t *cl, int destination, int subcommand, unsigned char * data, int datasize );
 EXTERN CommandCallBack_t CommandCallBack[CMD_VECTSIZE] INITNULLVECTOR;
 EXTERN void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
 #define REGISTER_CALLBACK(command,function) Register_CommandCallBack(command, (CommandCallBack_t)function)
 #define GET_CALLBACK(command) (CommandCallBack[command])
 
 
-EXTERN int send_RackLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize);
-EXTERN int send_RackLink_login(af_client_t *fd, char * password);
-EXTERN int process_RackLink_message(af_client_t *cl, char *buf, int *len);
+EXTERN int send_RackLink_command(rlsendport_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize);
+EXTERN int send_RackLink_login(rlsendport_t *fd, char * password);
+EXTERN int process_RackLink_message(rlsendport_t *cl, char *buf, int *len);
 EXTERN int decode_RackLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket);
 EXTERN unsigned char * c2p ( const int i );
 

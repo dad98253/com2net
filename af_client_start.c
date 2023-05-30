@@ -118,7 +118,7 @@ extern int com_filter_telnet( comport *comp, unsigned char *buf, int len );
 extern int af_server_set_sockopts( int s, int server_sock );
 extern void _af_server_cnx_handle_event( af_poll_t *ap );
 extern int send_client_command(af_client_t *cl, char * prompt, char * command);
-extern int process_RackLink_message(af_client_t *cl, char *buf, int *len);
+extern int process_RackLink_message(rlsendport_t *cl, char *buf, int *len);
 
 int af_client_start( comport *coms )
 {

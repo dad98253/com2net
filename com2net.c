@@ -122,10 +122,13 @@ void com_port_handler( af_poll_t *ap );
 void handle_RackLink_server_socket_event( af_poll_t *ap );
 void RackLink_com_port_handler( af_poll_t *ap );
 void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr);
-CommandCallBack_t ProcessPing (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
-CommandCallBack_t ProcessPowerOutletStatus (af_client_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
-CommandCallBack_t ProcessLogin (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize );
+CommandCallBack_t ProcessPing (rlsendport_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
+CommandCallBack_t ProcessPowerOutletStatus (rlsendport_t *af, int destination, int subcommand, unsigned char * envelope, int datasize );
+CommandCallBack_t ProcessLogin (rlsendport_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize );
 int CheckTelnetNegotiationStatus( int fd , unsigned char * outbuf );
+int Dump_af_client ( af_client_t * af , char * af_name , char * routine);
+char * str2str ( char **str, char ** p , int maxlen);
+char * p2str ( char **str, void * p );
 
 extern int termios(int fd);
 
@@ -754,6 +757,12 @@ void RackLink_com_port_handler( af_poll_t *ap )
 	comport         *comp = (comport *)ap->context;
 	af_client_t		*client = &(comp->comclient);
 	int				 iret = 0;
+	rlsendport_t	 rlport;
+
+	rlport.fd = client;
+	rlport.comfd = comp->fd;
+	rlport.inout =	comp->inout;
+
 
 	if ( ap->revents & POLLIN )
 	{
@@ -787,7 +796,7 @@ void RackLink_com_port_handler( af_poll_t *ap )
 //				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
 //					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
 					//               write to telnet port???
-				process_RackLink_message(client, buf, &len);
+				process_RackLink_message(&rlport, buf, &len);
 //				}
 			}
 			// Log it
@@ -1367,9 +1376,7 @@ void com_handle_event( af_poll_t *ap )
 			}
 
 		}
-	}
-	else if ( ap->revents )
-	{
+	} else if ( ap->revents ) {
 		// Anything but POLLIN is an error.
 		af_log_print( APPF_MASK_SERVER+LOG_INFO, "dcli socket error, revents: %d", ap->revents );
 		af_server_disconnect(cnx);
@@ -1383,13 +1390,20 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 	unsigned char    buf[2048];
 	unsigned char    outbuf[2048];
 	char *			 ptr;
-	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
-	comport *comp = (comport *)cnx->user_data;
+//	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
+//	comport *comp = (comport *)cnx->user_data;
+	comport *comp = (comport *)ap->context;	//  try this?? looks right hmmm...
+	af_server_cnx_t *cnx = comp->cnx;
 	af_client_t *af = &(comp->comclient);
 	int				 iret;
 	int				 OnOrOff;
 	int				 Outlet;
 	unsigned char	 envelope[2];
+	rlsendport_t	rlport;
+
+	rlport.fd = af;
+	rlport.comfd = comp->fd;
+	rlport.inout =	comp->inout;
 
 
 	if ( ap->revents & POLLIN )
@@ -1425,7 +1439,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				// strip \n\r
 				ptr = strtok( (char *)buf, " \t\n\r" );
 				// send the password
-				if ( send_RackLink_login( &(comp->comclient), ptr) ) {
+				if ( send_RackLink_login( &rlport, ptr) ) {
 					fprintf( cnx->fh, "RackLink send Failed on com port %s\r\n\n\nBYE!\r\n", comp->dev );
 					af_server_disconnect(cnx);
 					return;
@@ -1459,14 +1473,14 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				}
 
 				if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
-					send_RackLink_command(af,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
+					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
 				}
 
 
@@ -1497,7 +1511,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 					}
 					envelope[0] = (unsigned char)Outlet;
 					envelope[1] = (unsigned char)(OnOrOff -1);
-					send_RackLink_command(af, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
+					send_RackLink_command( &rlport, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
 				}
 			}
 		}
@@ -1539,7 +1553,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 
 	cnx->inout = comp->inout;
 	if ( cnx->inout != 3 ) {	// don't open a com port if this is a RackLink connect via TCP
-	// Open the comport if it is not open
+	// Open the com port if it is not open
 		if ( comp->fd < 0 )
 		{
 			if ( open_comport( comp ) < 0 )
@@ -1647,10 +1661,11 @@ void Register_CommandCallBack(unsigned char command, CommandCallBack_t ptr) {
 }
 
 
-CommandCallBack_t ProcessLogin (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	char	buf[256];
 	int buflen = 0;
 	int iret;
+	af_client_t *fd = rlport->fd;
 	comport *coms = (comport*)fd->extra_data;
 	// login/response
 	if ( subcommand == 0x10 && datasize == 4) {
@@ -1676,23 +1691,23 @@ CommandCallBack_t ProcessLogin (af_client_t *fd, int destination, int subcommand
 	return(0);
 }
 
-CommandCallBack_t ProcessPing (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+CommandCallBack_t ProcessPing ( rlsendport_t *rlport, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	// let's interogate switch settings on each ping...
 	if ( subcommand == 1 ) {
 		printf("Interrogating Power Outlet status...\n");
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(3), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(4), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(5), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
-		send_RackLink_command(fd,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(3), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(4), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(5), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
+		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
 	}
 	return(0);
 }
 
-CommandCallBack_t ProcessPowerOutletStatus (af_client_t *fd, int destination, int subcommand, unsigned char * envelope, int datasize ) {
+CommandCallBack_t ProcessPowerOutletStatus ( rlsendport_t *rlport, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	char ctemp[260];
 	// print the switch setting
 	if ( datasize > 255 ) goto ret1;
@@ -1708,7 +1723,7 @@ ret1:
 
 unsigned char * c2p ( const int i ) { ctempjk = (unsigned char)i; return(&ctempjk);}
 
-int send_RackLink_command(af_client_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize) {
+int send_RackLink_command( rlsendport_t *rlport, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize) {
 	unsigned int sum = 0;
 	unsigned char * datapacket;
 	unsigned char * ptr;
@@ -1716,6 +1731,7 @@ int send_RackLink_command(af_client_t *fd, int destination,int command,int subco
 	int status;
 	int exitval;
 	int packetsize;
+	af_client_t *fd = rlport->fd;
 
 	packetsize = datasize + 5;
 	ptr = datapacket = (unsigned char *) calloc(packetsize + 3 , 1);
@@ -1759,41 +1775,54 @@ int send_RackLink_command(af_client_t *fd, int destination,int command,int subco
 			fflush(stdout);
 		}
 
-		status = af_client_send_raw( fd, datapacket, (size_t)(packetsize+2) );
-		/*
-		client_send can return:
-			AF_TIMEOUT
-			AF_ERRNO
-			AF_SOCKET
-			AF_OK
-		*/
+		if ( rlport->inout != 2 ) {
+			status = af_client_send_raw( fd, datapacket, (size_t)(packetsize+2) );
+			/*
+			client_send can return:
+				AF_TIMEOUT
+				AF_ERRNO
+				AF_SOCKET
+				AF_OK
+			*/
 
-		switch ( status )
-		{
-		case AF_OK:
-			// command was sent successfully
-			tcli.conn.busy = TRUE;
-			exitval = 0;
-			break;
-		default:
-			//  send failed
-			af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, status, tcli.cmd.part[tcli.cmd.current] );
-			exitval = 1;
-			break;
+			switch ( status )
+			{
+			case AF_OK:
+				// command was sent successfully
+				tcli.conn.busy = TRUE;
+				exitval = 0;
+				break;
+			default:
+				//  send failed
+				af_log_print(LOG_ERR, "%s: client_send returned %d (cmd=%s)", __func__, errno, strerror(errno) );
+				exitval = 1;
+				break;
+			}
+		} else {	// RackLink connected via com port
+			if ( ( status = write( rlport->comfd, datapacket, (size_t)(packetsize+2) ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+				fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, explain_write(rlport->comfd, datapacket, (size_t)(packetsize+2)) );
+#else	//  HAVE_EXPLAIN_H
+				fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+				exitval = 1;
+			} else {
+				tcli.conn.busy = TRUE;
+				exitval = 0;
+			}
 		}
-
 
 
 	free(datapacket);
 	return(exitval);
 }
 
-int send_RackLink_login(af_client_t *fd, char * password) {
+int send_RackLink_login( rlsendport_t *rlport, char * password) {
 	char * userpassword = NULL;
 	userpassword = (char*)malloc(strlen(password)+7);
 	strcpy(userpassword,"user|");
 	strcat(userpassword,password);
-	if ( send_RackLink_command(fd,0,LOGIN_CMD,SET_SCMD,(unsigned char *)userpassword, strlen(userpassword)) ) {
+	if ( send_RackLink_command(rlport,0,LOGIN_CMD,SET_SCMD,(unsigned char *)userpassword, strlen(userpassword)) ) {
 		free(userpassword);
 		return(1);
 	}
@@ -1801,7 +1830,7 @@ int send_RackLink_login(af_client_t *fd, char * password) {
 	return(0);
 }
 
-int process_RackLink_message(af_client_t *cl, char *buf, int *len) {
+int process_RackLink_message( rlsendport_t *rlport, char *buf, int *len) {
 	int destination,command,subcommand,datasize;
 	unsigned char *envelope;
 	unsigned char *nextpacket;
@@ -1860,7 +1889,7 @@ int process_RackLink_message(af_client_t *cl, char *buf, int *len) {
 					if ( subcommand == 1 ) {
 						printf("Ping...(Sending Pong)\n");
 						// send Pong
-						send_RackLink_command(cl,0,0x01,0x10,(unsigned char *)"", 0);
+						send_RackLink_command(rlport,0,0x01,0x10,(unsigned char *)"", 0);
 					}
 					break;
 				case LOGIN_CMD :	// login/response
@@ -1958,7 +1987,7 @@ int process_RackLink_message(af_client_t *cl, char *buf, int *len) {
 					break;
 			}
 // process command callbacks
-		if ( CommandCallBack[command] ) GET_CALLBACK(command) ( cl, destination, subcommand, envelope, datasize );
+		if ( CommandCallBack[command] ) GET_CALLBACK(command) ( rlport, destination, subcommand, envelope, datasize );
 // are there more commands to process in this record?
 		if ( iret < 0 ) {
 			templen -= ( nextpacket - (unsigned char *)tempbuf );
@@ -2018,5 +2047,67 @@ int decode_RackLink_command(int *destination,int *command,int *subcommand,unsign
 	*data = datapacket;						// data
 
 	if ( *nextpacket ) return(-1);
+	return(0);
+}
+
+char * p2str ( char **str, void * p ) {
+	if ( p == NULL ) {
+		strcpy(*str,(char *)"--null--");
+		return(*str);
+	}
+	sprintf(*str,"%p",(void *)p);
+	return(*str);
+}
+
+char * str2str ( char **str, char ** p , int maxlen) {
+	if ( *p == NULL ) {
+		strcpy(*str,(char *)"--null--");
+		return(*str);
+	}
+	strncpy(*str,*p,maxlen);
+	*(str+maxlen) = '\000';
+	return(*str);
+}
+
+
+int Dump_af_client ( af_client_t * af , char * af_name , char * routine) {
+	char strd[256];
+	char * strp = strd;
+	char * stratch;
+/*	struct _af_client_s
+	{
+		char                *service;  // Specifiy /etc/services name
+		int                  port;     // TCP port
+		unsigned int         ip;       // Remote IP
+
+		int                  sock;     // Connection
+
+		// Prompt detection
+		char                 prompt[MAX_PROMPT];
+		int                  prompt_len;
+		char                 saved[MAX_PROMPT];
+		int                  saved_len;
+		void				*extra_data;
+		int					 filter_telnet;
+
+		struct _af_client_s *next;
+
+	}; */
+	fprintf (stderr,"Dumping struct _af_client \"%s\" from %s, address is %s :\n", af_name, routine, p2str( &strp, (void*)af ));
+	if ( af == NULL ) return(1);
+	fprintf (stderr,"  {\n\t.service = \"%s\"\n",str2str(&strp,&af->service,254));
+	fprintf (stderr,"\t.port = %i\n",af->port);
+	fprintf (stderr,"\t.ip = %u\n",af->ip);
+	fprintf (stderr,"\t.sock = %i\n",af->sock);
+	stratch = af->prompt;
+	fprintf (stderr,"\t.prompt = \"%s\"\n",str2str(&strp,&stratch,MAX_PROMPT));
+	fprintf (stderr,"\t.prompt_len = %i\n",af->prompt_len);
+	stratch = af->saved;
+	fprintf (stderr,"\t.saved = \"%s\"\n",str2str(&strp,&stratch,MAX_PROMPT));
+	fprintf (stderr,"\t.saved_len = %i\n",af->saved_len);
+	fprintf (stderr,"\t.extra_data = \"%s\"\n",p2str(&strp,af->extra_data));
+	fprintf (stderr,"\t.filter_telnet = %i\n",af->filter_telnet);
+	fprintf (stderr,"\t.next = \"%s\"\n  }\n",p2str(&strp,af->next));
+
 	return(0);
 }
