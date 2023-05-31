@@ -263,6 +263,9 @@ int af_client_start( comport *coms )
 		server.sin_port = htons(usport);
 	}
 
+	if ( client->service != NULL ) {
+		service = strdup(client->service);
+	}
 	af_log_print(LOG_INFO, "trying to connect to service: %s at ip = %u, port %u", service, ip, usport);
 //	ip = INADDR_LOOPBACK;	// for debug:	test known ip address
 
@@ -273,7 +276,8 @@ int af_client_start( comport *coms )
 	free(client);
 	client = &(coms->comclient);
 	//set telnet filter option
-	client->filter_telnet = 1;
+	client->filter_telnet = 0;
+	if ( strcmp(service,(char *)"telnet") == 0 ) client->filter_telnet = 1;
 	//set the extra pointer back to the coms struct
 	client->extra_data = (void*) coms;
 
@@ -370,7 +374,7 @@ int af_client_start( comport *coms )
 
 	buf = (char *)malloc(TEMPBUFSIZE);
 	if ( buf != NULL ) {
-		snprintf(buf, TEMPBUFSIZE, "\x1b[2J%s is connected to %s", coms->dev, coms->remote);
+		snprintf(buf, TEMPBUFSIZE, "fd %i is now connected to %s", coms->comclient.sock, coms->remote);
 		af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "%s", buf );
 		strcat(buf,(char*)"\r\n");
 		write( coms->fd, buf, strlen(buf) );
@@ -478,10 +482,15 @@ void handle_server_socket_raw_event( af_poll_t *af )
 {
 	int status;
 	int i;
+	rlsendport_t rlport;
 	char buf[MAX_SOCK_READ_BUF];
 	int len = MAX_SOCK_READ_BUF;
 	comport *coms;
 	coms = (comport*) (af->context);
+
+	rlport.fd = &(coms->comclient);
+	rlport.comfd = -1;
+	rlport.inout =	3;
 
 	//af_log_print(LOG_DEBUG, "%s: revents %d", __func__, revents);
 
@@ -527,7 +536,7 @@ void handle_server_socket_raw_event( af_poll_t *af )
 		}
 		printf("\n");
 		fflush(stdout);
-		process_RackLink_message(&(coms->comclient), buf, &len);
+		process_RackLink_message(&rlport, buf, &len);
 	}
 }
 
