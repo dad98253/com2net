@@ -593,7 +593,7 @@ int main( int argc, char **argv )
 //			coms[i].comserver.fd = coms[i].comclient.sock;
 			// This is a RackLink run
 			// set any required RackLink callback functions
-			REGISTER_CALLBACK(PING_CMD, ProcessPing);
+			//REGISTER_CALLBACK(PING_CMD, ProcessPing);
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
 			REGISTER_CALLBACK(LOGIN_CMD, ProcessLogin);
 
@@ -616,6 +616,15 @@ int main( int argc, char **argv )
 			// set any required RackLink callback functions
 			REGISTER_CALLBACK(PING_CMD, ProcessPing);
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
+			REGISTER_CALLBACK(LOGIN_CMD, ProcessLogin);
+			// send the password
+			rlsendport_t	 rlport;
+
+			rlport.fd = &(coms[i].comclient);
+			rlport.comfd = coms[i].fd;
+			rlport.inout =	coms[i].inout;
+			if ( send_RackLink_login(&rlport,coms[i].commands) ) return(0);
+
 
 		} else {
 			coms[i].comserver.port = coms[i].tcpport;
@@ -1687,7 +1696,7 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 		buf[buflen] = '\000';
 	}
 
-	if (buflen ) {
+	if ( rlport->inout == 2 && buflen ) {
 		if ( ( iret = write( coms->cnx->fd, buf, buflen ) ) == -1 ) {		// going out to the newly connected telnet client
 #ifdef HAVE_EXPLAIN_H
 			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, explain_write(coms->cnx->fd, buf, buflen ) );
@@ -1701,7 +1710,7 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 
 CommandCallBack_t ProcessPing ( rlsendport_t *rlport, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	// let's interogate switch settings on each ping...
-/*	if ( subcommand == 1 ) {
+	if ( subcommand == 1 ) {
 		printf("Interrogating Power Outlet status...\n");
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
@@ -1711,7 +1720,7 @@ CommandCallBack_t ProcessPing ( rlsendport_t *rlport, int destination, int subco
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
-	}*/
+	}
 	return(0);
 }
 
