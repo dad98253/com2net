@@ -459,6 +459,7 @@ int main( int argc, char **argv )
 	int   ca, i;
 	char *conffile = "/etc/com2net.conf";
 	af_client_t *af_client_temp;
+	rlsendport_t	 rlport;
 
 	mydaemon.appname = argv[0];
 #ifdef DEBUG
@@ -618,7 +619,6 @@ int main( int argc, char **argv )
 			REGISTER_CALLBACK(READPOWEROUTLET_CMD, ProcessPowerOutletStatus);
 			REGISTER_CALLBACK(LOGIN_CMD, ProcessLogin);
 			// send the password
-			rlsendport_t	 rlport;
 
 			rlport.fd = &(coms[i].comclient);
 			rlport.comfd = coms[i].fd;
