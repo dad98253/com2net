@@ -576,6 +576,10 @@ int main( int argc, char **argv )
 			af_client_temp = af_client_new( (char*)"RackLink", (unsigned int)INADDR_LOOPBACK, coms[i].tcpport, coms[i].prompt );
 			af_log_print(LOG_INFO, "con2net server: %s, port %d, prompt %s", (char*)"RackLink", coms[i].tcpport, coms[i].prompt );
 			coms[i].comclient = *af_client_temp;
+			//set telnet filter option
+			coms[i].comclient.filter_telnet = 1;
+			//set the extra pointer back to the coms struct
+			coms[i].comclient.extra_data = (void*) &(coms[i]);
 			coms[i].comserver.port = coms[i].tcpport;
 			coms[i].comserver.prompt = "";
 			coms[i].comserver.local = 0;
@@ -1615,6 +1619,9 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 		buflen = sprintf(buf,"Password:");
 		buf[buflen] = '\000';
 
+	} else if ( cnx->inout == 3 && ( cnx->fd == comp->comclient.sock && (strcmp(comp->comclient.service, (char *)"RackLink") == 0 ) ) ) {
+// if the remote is a RackLink, it is not a telnet service!
+		buflen = 0;
 	} else {					// all other type of telnet connections
 		buf[0] = IAC;
 		buf[1] = WILL;	// Will
@@ -1673,6 +1680,7 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 			buflen = sprintf( buf, "login rejected...\ntry again.\nPassword:");
 		} else if ( *envelope == 1 ) {
 			buflen = sprintf( buf, "login successful...\nRackLink>");
+			RackLinkIsLoggedIn = 1;
 		} else {
 			buflen = sprintf( buf, "unrecognized login response...\nPossibly a connection problem. Try again.\nPassword:");
 		}
@@ -1693,7 +1701,7 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 
 CommandCallBack_t ProcessPing ( rlsendport_t *rlport, int destination, int subcommand, unsigned char * envelope, int datasize ) {
 	// let's interogate switch settings on each ping...
-	if ( subcommand == 1 ) {
+/*	if ( subcommand == 1 ) {
 		printf("Interrogating Power Outlet status...\n");
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(1), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(2), 1);
@@ -1703,7 +1711,7 @@ CommandCallBack_t ProcessPing ( rlsendport_t *rlport, int destination, int subco
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(6), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(7), 1);
 		send_RackLink_command(rlport,0,READPOWEROUTLET_CMD,0x02,c2p(8), 1);
-	}
+	}*/
 	return(0);
 }
 
