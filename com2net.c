@@ -17,8 +17,6 @@
 #define VER_MAJOR 1
 #define VER_MINOR 0
 #define MAXDECODE	250
-#define MAX_CMDS		2048
-#define MAX_CMD_BUF		4096
 #define DEFAULT_CONNECT_TIMO	5
 #define DEFAULT_CMD_TIMO	10
 #define DEFAULT_PORT		23
@@ -107,6 +105,8 @@ typedef struct _comport {
 	unsigned int 	connect_timo;	/* connect timeout */
 	unsigned int 	cmd_timo;		/* command timeout */
 	char			decoded[MAXDECODE];
+	char			buf[BUFFERSIZE];
+	char			*bufstart;
 } comport;
 
 int numcoms=0;
@@ -446,6 +446,7 @@ void c2m_read_config( char *conffile )
 		comp->numprompts = 0;
 		if (comp->commands != NULL) comp->numprompts = 1;
 		comp->connect_timo = 15;
+		comp->bufstart = comp->buf;
 		numcoms++;
 		if (numcoms == MAXCOMS) {
 			fprintf(stderr,"too many coms defined in the config file\nmaximum allowed is %i\n",MAXCOMS);
@@ -460,6 +461,7 @@ int main( int argc, char **argv )
 	char *conffile = "/etc/com2net.conf";
 	af_client_t *af_client_temp;
 	rlsendport_t	 rlport;
+	comport *comp;
 
 	mydaemon.appname = argv[0];
 #ifdef DEBUG
@@ -525,6 +527,13 @@ int main( int argc, char **argv )
 	af_daemon_set( &mydaemon );
 	af_daemon_start();
 
+	if (numcoms) {
+		for(i=0;i<numcoms;i++) {
+			comp=&coms[i];
+			if ( !comp->logfh && !mydaemon.daemonize ) comp->logfh = stdout;
+		}
+	}
+	
 	myserver.port = 0x3300;
 	myserver.prompt = "com2net>";
 	myserver.local = 1;
@@ -714,11 +723,11 @@ void com_port_handler( af_poll_t *ap )
 			if ( errno != EAGAIN || len == 0 )
 			{
 #ifdef HAVE_EXPLAIN_H
-				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
-					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1 ) );
+				af_log_print( LOG_WARNING, "com port fd %d closed in %s: errno %d (%s)",\
+					ap->fd, __func__, errno, explain_read(ap->fd, buf, sizeof(buf)-1 ) );
 #else	// HAVE_EXPLAIN_H
-				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
-					ap->fd, errno, strerror(errno)  );
+				af_log_print( LOG_WARNING, "com port fd %d closed in %s: errno %d (%s)",\
+					ap->fd, __func__, errno, strerror(errno)  );
 #endif	// HAVE_EXPLAIN_H
 				af_poll_rem( ap->fd );
 				com_port_close( comp );
@@ -762,8 +771,10 @@ void com_port_handler( af_poll_t *ap )
 void RackLink_com_port_handler( af_poll_t *ap )
 {
 	int              len = 0;
-	char             buf[2048];
-	char             dumpbuf[9000];
+	char             *buf;
+	char			 *bufstart;
+	int				 unused = 0;
+	char             dumpbuf[FOURBUFFERSIZE];
 	int 			 lastchr;
 	int 			 morechr;
 	int				 i;
@@ -771,15 +782,27 @@ void RackLink_com_port_handler( af_poll_t *ap )
 	af_client_t		*client = &(comp->comclient);
 	int				 iret = 0;
 	rlsendport_t	 rlport;
+	int				 truelength;
 
 	rlport.fd = client;
 	rlport.comfd = comp->fd;
 	rlport.inout =	comp->inout;
 
+	buf = comp->buf;
+	bufstart = comp->bufstart;
 
+
+//	fprintf (stdout,"comp,client,buf,bufstart = %p, %p, %p, %p\n",comp,client,buf,bufstart);
 	if ( ap->revents & POLLIN )
 	{
-		len = read( ap->fd, buf, sizeof(buf)-1 );
+#ifdef HAVE_LONG_UNSIGNED
+//		fprintf (stdout, " reading Racklink; ap->fd, bufstart, buffer size = %i, %p, %lu\n",ap->fd, bufstart, BUFFERSIZE - 1 - ( bufstart - &buf[0]) );
+#else	// HAVE_LONG_UNSIGNED
+//		fprintf (stdout, " reading Racklink; ap->fd, bufstart, buffer size = %i, %p, %u\n",ap->fd, bufstart, BUFFERSIZE - 1 - ( bufstart - &buf[0]) );
+#endif	// HAVE_LONG_UNSIGNED
+		len = read( ap->fd, bufstart, BUFFERSIZE - 1 - ( bufstart - &buf[0] ) );
+		truelength = len + ( bufstart - buf );
+		fprintf (stdout, "truelength = %i\n", truelength);
 
 		// Handle read errors
 		if ( len <= 0 )
@@ -787,11 +810,11 @@ void RackLink_com_port_handler( af_poll_t *ap )
 			if ( errno != EAGAIN || len == 0 )
 			{
 #ifdef HAVE_EXPLAIN_H
-				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
-					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
+				af_log_print( LOG_WARNING, "com port fd %d closed in %s: errno %d (%s)",\
+					ap->fd, __func__, errno, explain_read(ap->fd, bufstart, BUFFERSIZE - 1 - ( bufstart - &buf[0] ))  );
 #else	//  HAVE_EXPLAIN_H
-				af_log_print( LOG_WARNING, "com port fd %d closed: errno %d (%s)",\
-					ap->fd, errno, strerror(errno)  );
+				af_log_print( LOG_WARNING, "com port fd %d closed in %s: errno %d (%s)",\
+					ap->fd, __func__, errno, strerror(errno)  );
 #endif	//  HAVE_EXPLAIN_H
 				af_poll_rem( ap->fd );
 				com_port_close( comp );
@@ -800,24 +823,15 @@ void RackLink_com_port_handler( af_poll_t *ap )
 		else
 		{
 			// terminate the read data
-			buf[len] = 0;
-
-			af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "com to telnet %d", len );
-			// Send data to the client
-			if ( comp->cnx )
-			{
-//				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
-//					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
-					//               write to telnet port???
-				process_RackLink_message(&rlport, buf, &len);
-//				}
-			}
+			*(bufstart+len) = 0;
 			// Log it
+			af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "com to telnet %d", len );
+			// dump the buffer
 			if ( comp->logfh )
 			{
 				lastchr = sprintf(dumpbuf, "received %i bytes : (0x)",len);
 				for ( i = 0; i < len; i++) {
-					morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(buf+i)));
+					morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(bufstart+i)));
 					lastchr += morechr;
 				}
 				morechr = sprintf(dumpbuf+lastchr,"\n");
@@ -825,11 +839,35 @@ void RackLink_com_port_handler( af_poll_t *ap )
 				*(dumpbuf+lastchr) = '\000';
 
 				fflush(stdout);
-				iret = fwrite( buf, sizeof(char), lastchr+1, comp->logfh );
-				if ( iret < lastchr ) {
-					af_log_print( LOG_ERR, "fwrite in %s failed - returned %i when %i was expected", __func__ , iret, lastchr );
+				if ( !comp->logfh ) {
+					af_log_print( LOG_ERR, "comp->logfh in %s in undefined - not dumping data", __func__ );
+				} else {
+					fflush( comp->logfh );
+					iret = fwrite( dumpbuf, sizeof(char), lastchr+1, comp->logfh );
+					if ( iret < lastchr ) {
+						af_log_print( LOG_ERR, "fwrite in %s failed - returned %i when %i was expected", __func__ , iret, lastchr );
+					}
+					fflush( comp->logfh );
 				}
-				fflush( comp->logfh );
+			}
+			// Send data to the client
+			if ( comp->cnx )
+			{
+//				if ( ( iret = write( comp->cnx->fd, buf, len ) ) == -1 ) {
+//					fprintf(stderr, "write to com port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
+					//               write to telnet port???
+				process_RackLink_message(&rlport, buf, &truelength, &unused );
+//				}
+				if ( unused ) {
+					if ( len != unused ) {		// move leftovers to the start of the buffer
+						for (i=0;i<unused;i++) {
+							*(bufstart+i) = *(bufstart+len-unused+i);
+						}
+					}
+					comp->bufstart = bufstart += unused;
+				} else {
+					comp->bufstart = bufstart = buf;
+				}
 			}
 		}
 	}
@@ -1399,6 +1437,7 @@ void com_handle_event( af_poll_t *ap )
 void handle_RackLink_server_socket_event( af_poll_t *ap )
 {
 	int              len = 0;
+	int				 goodcommand = 1;
 	int				 numout;
 	unsigned char    buf[2048];
 	unsigned char    outbuf[2048];
@@ -1411,7 +1450,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 	int				 iret;
 	int				 OnOrOff;
 	int				 Outlet;
-	unsigned char	 envelope[2];
+	unsigned char	 envelope[256];
 	rlsendport_t	rlport;
 
 	rlport.fd = af;
@@ -1421,25 +1460,19 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 
 	if ( ap->revents & POLLIN )
 	{
-		len = read( ap->fd, buf, sizeof(buf)-1 );
-
+		len = read( ap->fd, buf, sizeof(buf)-1 );			// Note : The telnet connection should have been opened in line mode
+															// Thus, len == 0 is a blank line and valid input. EAGAIN should not be possible.
 		// Handle read errors
-		if ( len <= 0 )
-		{
-			if ( errno != EAGAIN || len == 0 )
-			{
+		if ( len < 0 ) {
 #ifdef HAVE_EXPLAIN_H
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
-					ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
+			af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+				ap->fd, errno, explain_read(ap->fd, buf, sizeof(buf)-1)  );
 #else	//  HAVE_EXPLAIN_H
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
-					ap->fd, errno, strerror(errno)  );
+			af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+				ap->fd, errno, strerror(errno)  );
 #endif	//  HAVE_EXPLAIN_H
-				af_server_disconnect(cnx);
-			}
-		}
-		else
-		{
+			af_server_disconnect(cnx);
+		} else {
 			// terminate the read data
 			buf[len] = 0;
 
@@ -1455,6 +1488,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				if ( send_RackLink_login( &rlport, ptr) ) {
 					fprintf( cnx->fh, "RackLink send Failed on com port %s\r\n\n\nBYE!\r\n", comp->dev );
 					af_server_disconnect(cnx);
+					RackLinkIsLoggedIn = -1;
 					return;
 				}
 				RackLinkIsLoggedIn = -1;	// it won't be set positive until the login succeeds
@@ -1463,50 +1497,41 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 //	look for a valid RackLink command:
 // HELP
 // LOGOUT
-// STATUS
+// STATUS <Outlet Number>
 // ON <Outlet Number>
 // OFF <Outlet Number>
 ////////////////////////////////////////////////////////////////////////////////
 
-			if ( len == 2 || strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
-				iret = sprintf((char *)outbuf, "RackLink commands are:\r\n\tHELP\r\n\tLOGOUT\r\n\tSTATUS\r\n\tON <Outlet Number>\r\n\tOFF <Outlet Number>\r\n");
-				*(outbuf+iret) = '\000';
-				if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
-#ifdef HAVE_EXPLAIN_H
-					fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
-#else	//  HAVE_EXPLAIN_H
-					fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
-#endif	//  HAVE_EXPLAIN_H
-				}
-			}
-
-			if ( len > 3 ) {
-				if ( strncmp ((char *)buf,(char *)"LOGOUT",6) == 0 ) {
+			if ( len > 0 ) {
+				if ( strncmp ((char *)buf,(char *)"LOGOUT",6) == 0 ) {			// check for LOGOUT
 					af_server_disconnect(cnx);
+					return;
 				}
-
-				if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(1), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(2), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(3), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(4), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(5), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(6), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(7), 1);
-					send_RackLink_command(&rlport,0,READPOWEROUTLET_CMD,GETSTATE_SCMD,c2p(8), 1);
-				}
-
-
+				if ( strncmp ((char *)buf,(char *)"HELP",4) == 0 ) goodcommand = 0;		// check for HELP
+				// maybe a longer command...
 				*(buf+80) = '\000';		// make sure its terminated someplace
 				ptr = strtok( (char *)buf, ", \t\n\r" );
-				if (strncmp(ptr,(char *) "OFF",3) == 0) {
-					OnOrOff = 1;
-					ptr = strtok( NULL, ", \t\n\r" );
-				} else if (strncmp(ptr,(char *) "ON",2) == 0) {
+				if (strncmp(ptr,(char *) "OFF",3) == 0) {						// chek for OFF
 					OnOrOff = 2;
 					ptr = strtok( NULL, ", \t\n\r" );
-				} else {
+				} else if (strncmp(ptr,(char *) "ON",2) == 0) {					// check for ON
+					OnOrOff = 1;
+					ptr = strtok( NULL, ", \t\n\r" );
+				} else if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {	// check for STATUS
+					OnOrOff = 3;
+					ptr = strtok( NULL, ", \t\n\r" );
+				} else {														// must be a bad command
 					OnOrOff = 0;
+					goodcommand = 0;
+					iret = sprintf((char *)outbuf, "%s is not a recognized command\n", ptr );
+					*(outbuf+iret) = '\000';
+					if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+					}
 				}
 				if ( OnOrOff ) {
 					Outlet = atoi( ptr );
@@ -1515,35 +1540,58 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 						*(outbuf+iret) = '\000';
 						if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
 #ifdef HAVE_EXPLAIN_H
-							fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
+							fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
 #else	//  HAVE_EXPLAIN_H
-							fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
+							fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
 #endif	//  HAVE_EXPLAIN_H
 						}
 						return;
 					}
 					envelope[0] = (unsigned char)Outlet;
-					envelope[1] = (unsigned char)(OnOrOff -1);
-					send_RackLink_command( &rlport, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 2);
+					envelope[1] = (unsigned char)OnOrOff%2;
+					envelope[2] = (unsigned char)'0';
+					envelope[3] = (unsigned char)'0';
+					envelope[4] = (unsigned char)'0';
+					envelope[5] = (unsigned char)'0';
+					if ( OnOrOff > 2 ) {
+						send_RackLink_command( &rlport, 0, READPOWEROUTLET_CMD, GETSTATE_SCMD, envelope, 1);
+					} else {
+						send_RackLink_command( &rlport, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 6);
+					}
+				}
+			} else {
+				if ( RackLinkIsLoggedIn > -1 ) goodcommand = 0;
+			}
+			if ( !goodcommand ) {
+				iret = sprintf((char *)outbuf, "RackLink commands are:\r\n\tHELP\r\n\tLOGOUT\r\n\tSTATUS <Outlet Number>\r\n\tON <Outlet Number>\r\n\tOFF <Outlet Number>\r\n");
+				*(outbuf+iret) = '\000';
+				if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+					fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+					fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
 				}
 			}
-		}
+		}	// endif len > 0
 		if ( RackLinkIsLoggedIn > 0 ) {
 			iret = sprintf((char *)outbuf, "RackLink>");
-			*(outbuf+iret) = '\000';
-			if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+		}
+		*(outbuf+iret) = '\000';
+		if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
 #ifdef HAVE_EXPLAIN_H
-				fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, explain_write(ap->fd, outbuf, iret+1) );
+			fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
 #else	//  HAVE_EXPLAIN_H
-				fprintf(stderr, "write to RackLink telnet port could not be performed: errno %d (%s)", errno, strerror(errno) );
+			fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
 #endif	//  HAVE_EXPLAIN_H
-			}
 		}
 	} else if ( ap->revents ) {
 		// Anything but POLLIN is an error.
 		af_log_print( APPF_MASK_SERVER+LOG_INFO, "dcli socket error, revents: %d", ap->revents );
 		af_server_disconnect(cnx);
 	}
+
+	return;
 }
 
 void com_new_cnx( af_server_cnx_t *cnx, void *context )
@@ -1847,20 +1895,84 @@ int send_RackLink_login( rlsendport_t *rlport, char * password) {
 	return(0);
 }
 
-int process_RackLink_message( rlsendport_t *rlport, char *buf, int *len) {
+int process_RackLink_message( rlsendport_t *rlport, char *buf, int *len, int *unused) {
 	int destination,command,subcommand,datasize;
 	unsigned char *envelope;
 	unsigned char *nextpacket;
 	char *tempbuf;
 	int templen;
 	int iret = -1;
+//	char dumpbuf[FOURBUFFERSIZE];
+//	comport *comp;
+//	int lastchr;
+//	int morechr;
+	int i;
+
 	tempbuf = buf;
 	templen = *len;
+	*unused = 0;
+
+
+//	comp = (comport*)(rlport->fd->extra_data);
+
+	// dump the buffer
+/*	if ( comp->logfh ) {
+		lastchr = sprintf(dumpbuf, "processing a %i byte RackLink message : (0x)",*len);
+		for ( i = 0; i < *len; i++) {
+			morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(buf+i)));
+			lastchr += morechr;
+		}
+		morechr = sprintf(dumpbuf+lastchr,"\n");
+		lastchr += morechr;
+		*(dumpbuf+lastchr) = '\000';
+		fflush(stdout);
+		iret = fwrite( dumpbuf, sizeof(char), lastchr+1, comp->logfh );
+		if ( iret < lastchr ) {
+			af_log_print( LOG_ERR, "fwrite at %i in %s failed - returned %i when %i was expected", __LINE__ , __func__ , iret, lastchr );
+		}
+		fflush( comp->logfh );
+	} */
+
+	fprintf(stdout, "processing a %i byte RackLink message : (0x)",*len);
+	for ( i = 0; i < *len; i++) {
+		fprintf(stdout," %02x", (unsigned char)(*(buf+i)));
+	}
+	fprintf(stdout,"\n");
+	fflush(stdout);
+
 
 	while ( iret < 0 ) {
 		iret = decode_RackLink_command( &destination, &command, &subcommand, (unsigned char *)tempbuf, (unsigned int)(templen), &envelope, &datasize, &nextpacket);
-		if ( iret > 0 ) return(iret);
-		printf( " destination, command, subcommand - %i, %i, %i\n",destination, command, subcommand);
+		if ( iret > BUFFERSIZE ) return(iret-BUFFERSIZE);
+		if ( iret > 0 ) {
+			*unused = iret;
+/*			if ( comp->logfh ) {
+				lastchr = sprintf(dumpbuf, "%i bytes left over : ",*unused);
+				for ( i = *len - *unused; i < *len; i++) {
+					morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(buf+i)));
+					lastchr += morechr;
+				}
+				morechr = sprintf(dumpbuf+lastchr,"\n");
+				lastchr += morechr;
+				*(dumpbuf+lastchr) = '\000';
+				fflush(stdout);
+				iret = fwrite( dumpbuf, sizeof(char), lastchr+1, comp->logfh );
+				if ( iret < lastchr ) {
+					af_log_print( LOG_ERR, "fwrite at %i in %s failed - returned %i when %i was expected", __LINE__ , __func__ , iret, lastchr );
+				}
+				fflush( comp->logfh );
+			} */
+
+			fprintf(stdout, "%i bytes left over : ",*unused);
+			for ( i = *len - *unused; i < *len; i++) {
+				fprintf(stdout," %02x", (unsigned char)(*(buf+i)));
+			}
+			fprintf(stdout,"\n");
+			fflush(stdout);
+
+			return(0);
+		}
+		printf( "received packet: destination, command, subcommand - %i, %i, %i\n",destination, command, subcommand);
 		switch ( (unsigned char)command )
 			{
 				case NACK_CMD :	// NACK
@@ -2023,11 +2135,26 @@ int decode_RackLink_command(int *destination,int *command,int *subcommand,unsign
 	int packetsize;
 	*nextpacket = NULL;
 
-	if ( len < 7 ) {					// minimum length
-		printf ("Not a RackLink message\n");
-		return(1);
+	// dump the buffer
+	if ( !mydaemon.daemonize )
+	{
+		fprintf(stdout, "decoding a %i byte RackLink command   : (0x)",len);
+		for ( i = 0; i < len; i++) {
+			fprintf(stdout," %02x", (unsigned char)(*(raw+i)));
+		}
+		fprintf(stdout,"\n");
+		fflush(stdout);
+	}
+
+	if ( len < 2 ) {					// minimum length
+		return(BUFFERSIZE+1);
+	}
+	if ( *raw != 0xfe ) {					// header
+		printf ("Bad RackLink message header\n");
+		return(BUFFERSIZE+3);
 	}
 	*datasize = (int)(*(raw+1));			// datasize
+	if ( (*datasize + 3) > len ) return(len); // return the size of the unused partial message
 
 	packetsize = *datasize + 2;
 	// check checksum
@@ -2039,15 +2166,11 @@ int decode_RackLink_command(int *destination,int *command,int *subcommand,unsign
 	}
 	if ( chksum != *(raw+packetsize) ) {	// checksum
 		printf ("Bad message checksum, calculated = 0x%02x, read = 0x%02x\n",chksum , *(raw+packetsize) );
-		return(2);
-	}
-	if ( *raw != 0xfe ) {					// header
-		printf ("Bad RackLink message header\n");
-		return(3);
+		return(BUFFERSIZE+2);
 	}
 	if ( *(raw+packetsize+1) != 0xff ) {	// tail
 		printf ("Bad RackLink message tail character\n");
-		return(4);
+		return(BUFFERSIZE+4);
 	}
 	if ( *(raw+1) != (unsigned char)( len - 4 ) ) {	// length
 		*nextpacket = raw + packetsize + 2;

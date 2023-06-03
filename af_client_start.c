@@ -37,8 +37,6 @@
 
 #include "com2net.h"
 
-#define MAX_CMDS		2048
-#define MAX_CMD_BUF		4096
 #define HEX_PRINT_WIDTH		16
 #define DEFAULT_CONNECT_TIMO	5
 #define DEFAULT_CMD_TIMO	10
@@ -118,7 +116,7 @@ extern int com_filter_telnet( comport *comp, unsigned char *buf, int len );
 extern int af_server_set_sockopts( int s, int server_sock );
 extern void _af_server_cnx_handle_event( af_poll_t *ap );
 extern int send_client_command(af_client_t *cl, char * prompt, char * command);
-extern int process_RackLink_message(rlsendport_t *cl, char *buf, int *len);
+extern int process_RackLink_message(rlsendport_t *cl, char *buf, int *len, int *unused);
 
 int af_client_start( comport *coms )
 {
@@ -482,6 +480,7 @@ void handle_server_socket_raw_event( af_poll_t *af )
 {
 	int status;
 	int i;
+	int unused = 0;
 	rlsendport_t rlport;
 	char buf[MAX_SOCK_READ_BUF];
 	int len = MAX_SOCK_READ_BUF;
@@ -536,7 +535,7 @@ void handle_server_socket_raw_event( af_poll_t *af )
 		}
 		printf("\n");
 		fflush(stdout);
-		process_RackLink_message(&rlport, buf, &len);
+		process_RackLink_message(&rlport, buf, &len, &unused);
 	}
 }
 

@@ -11,6 +11,11 @@
 
 
 #define CMD_VECTSIZE	256
+#define BUFFERSIZE		2048
+#define TWICEBUFFERSIZE	BUFFERSIZE*2
+#define FOURBUFFERSIZE	BUFFERSIZE*4
+#define MAX_CMDS		BUFFERSIZE
+#define MAX_CMD_BUF		TWICEBUFFERSIZE
 
 #ifndef COM2NETBMAIN
 #define EXTERN          extern
@@ -115,7 +120,7 @@ EXTERN void Register_CommandCallBack(unsigned char command, CommandCallBack_t pt
 
 EXTERN int send_RackLink_command(rlsendport_t *fd, int destination,int command,int subcommand,unsigned char * data, unsigned int datasize);
 EXTERN int send_RackLink_login(rlsendport_t *fd, char * password);
-EXTERN int process_RackLink_message(rlsendport_t *cl, char *buf, int *len);
+EXTERN int process_RackLink_message( rlsendport_t *rlport, char *buf, int *len, int *unused);
 EXTERN int decode_RackLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket);
 EXTERN unsigned char * c2p ( const int i );
 
@@ -126,6 +131,6 @@ EXTERN unsigned char telnetServerMask[256] INITSZERO;
 EXTERN unsigned char telnetClientMask[256] INITSZERO;
 EXTERN unsigned char telnetTerminalMode[256] INITSZERO;
 EXTERN unsigned char telnetEditMode INITIZERO;
-EXTERN unsigned char RackLinkIsLoggedIn INITIZERO;
+EXTERN char RackLinkIsLoggedIn INITIZERO;
 
 #endif /* RACKLINK_H_ */
