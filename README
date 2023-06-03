@@ -25,5 +25,15 @@ racklinks,60000,/dev/ttyS7,9600,/tmp/log/com8.log,localhost,"",password
 racklink,60000,"","",/tmp/log/com8.log,192.168.1.200,"","password"
 out,23,/dev/ttyS0,2400,/tmp/log/com0b.log,localhost,ogin: ,dad
 
-
+#//	valid RackLink commands:
+#// HELP
+#// LOGOUT
+#// STATUS <Outlet Number>
+#// ON <Outlet Number>
+#// OFF <Outlet Number>
+#
+# Note that in order to log into the RackLink, you MUST first set the appropriate
+# password(s) using the web interface. The TCP (racklink) and serial (racklinks)
+# command interfaces will not be available until these passwords are set. (see
+# the I-00472-Series-Protocol.pdf file for details.)
 
