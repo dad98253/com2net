@@ -34,6 +34,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#ifdef HAVE_EXPLAIN_H
+#include <libexplain/libexplain.h>
+#endif  // HAVE_EXPLAIN_H
 
 #include "com2net.h"
 
@@ -120,6 +123,7 @@ extern int process_RackLink_message(rlsendport_t *cl, char *buf, int *len, int *
 
 int af_client_start( comport *coms )
 {
+	int iret;
 	af_client_t *client;
 	af_server_t *comserver;
 	char *service = "telnet";
@@ -375,7 +379,14 @@ int af_client_start( comport *coms )
 		snprintf(buf, TEMPBUFSIZE, "fd %i is now connected to %s", coms->comclient.sock, coms->remote);
 		af_log_print( APPF_MASK_SERVER+LOG_DEBUG, "%s", buf );
 		strcat(buf,(char*)"\r\n");
-		write( coms->fd, buf, strlen(buf) );
+		if ( ( iret = write( coms->fd, buf, strlen(buf) ) ) ) {
+#ifdef HAVE_EXPLAIN_H
+			fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(coms->fd, buf, strlen(buf)) );
+#else	//  HAVE_EXPLAIN_H
+			fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
+			//               write to telnet port???
+#endif	//  HAVE_EXPLAIN_H
+		}
 		free(buf);
 	}
 //	af_poll_add( client->sock, POLLIN, handle_server_socket_event, coms );
@@ -599,6 +610,7 @@ int send_client_command(af_client_t *fd, char * prompt, char * command)
 void client_com_handle_event( af_poll_t *ap )
 {
 	int              len = 0;
+	int				 iret;
 	unsigned char    buf[2048];
 	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
 	comport *comp = (comport *)cnx->user_data;
@@ -628,7 +640,14 @@ void client_com_handle_event( af_poll_t *ap )
 			// filter telnet data out
 			len = com_filter_telnet( comp, buf, len );
 
-			write( comp->fd, buf, len );
+			if ( ( iret = write( comp->fd, buf, len ) ) ) {
+#ifdef HAVE_EXPLAIN_H
+				fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(comp->fd, buf, len) );
+#else	//  HAVE_EXPLAIN_H
+				fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
+				//               write to telnet port???
+#endif	//  HAVE_EXPLAIN_H
+			}
 		}
 	}
 	else if ( ap->revents )
