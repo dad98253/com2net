@@ -120,6 +120,7 @@ void c2m_del_cnx( af_server_cnx_t *cnx );
 void c2m_cli( char *cmd, af_server_cnx_t *cnx );
 void com_new_cnx( af_server_cnx_t *cnx, void *context );
 void com_del_cnx( af_server_cnx_t *cnx );
+void com_del_RackLink_cnx( af_server_cnx_t *cnx );
 void com_handler( char *cmd, af_server_cnx_t *cnx );
 void com_port_handler( af_poll_t *ap );
 void handle_RackLink_server_socket_event( af_poll_t *ap );
@@ -593,7 +594,7 @@ int main( int argc, char **argv )
 			//set the extra pointer back to the coms struct
 			coms[i].comclient.extra_data = (void*) &(coms[i]);
 			coms[i].comserver.port = coms[i].tcpport;
-			coms[i].comserver.prompt = "";
+			coms[i].comserver.prompt = strdup ("Password:");
 			coms[i].comserver.local = 0;
 			coms[i].comserver.max_cnx = 2;
 			coms[i].comserver.new_connection_callback = com_new_cnx;
@@ -612,7 +613,7 @@ int main( int argc, char **argv )
 		} else if ( coms[i].inout == 3 ) {
 			// we will set uo a standard telnet server, but using the RackLink port (60000)
 			coms[i].comserver.service = strdup ("RackLink");
-			coms[i].comserver.prompt = strdup ("RackLink>");
+			coms[i].comserver.prompt = strdup ("Password:");
 			coms[i].comserver.port = 60000;
 			coms[i].comserver.local = 0;
 			coms[i].comserver.max_cnx = 2;
@@ -782,6 +783,7 @@ void RackLink_com_port_handler( af_poll_t *ap )
 	rlport.fd = client;
 	rlport.comfd = comp->fd;
 	rlport.inout =	comp->inout;
+	rlport.ap = ap;
 
 	buf = comp->buf;
 	bufstart = comp->bufstart;
@@ -1069,6 +1071,25 @@ void com_del_cnx( af_server_cnx_t *cnx )
 		comp->cnx = NULL;
 	}
 	cnx->user_data = NULL;
+}
+
+void com_del_RackLink_cnx( af_server_cnx_t *cnx )
+{
+	af_client_t *client;
+	comport *comp = (comport *)cnx->user_data;
+	// stop and delete the connection to the RackLink client
+	client = cnx->client;
+	client = &(comp->comclient);
+	af_client_disconnect(client);
+//	af_client_delete(client);
+
+	// Remove my connection structure
+	if ( comp != NULL )
+	{
+		comp->cnx = NULL;
+	}
+	cnx->user_data = NULL;
+
 }
 
 enum {
@@ -1447,10 +1468,12 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 	int				 Outlet;
 	unsigned char	 envelope[256];
 	rlsendport_t	rlport;
+	int				 PromptMe = 1;
 
 	rlport.fd = af;
 	rlport.comfd = comp->fd;
 	rlport.inout =	comp->inout;
+	rlport.ap =	ap;
 
 
 	if ( ap->revents & POLLIN )
@@ -1500,7 +1523,17 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 			if ( len > 0 ) {
 				if ( strncmp ((char *)buf,(char *)"LOGOUT",6) == 0 ) {			// check for LOGOUT
 					RackLinkIsLoggedIn = -1;
+					EnableClient = 0;
 					af_server_disconnect(cnx);
+					iret = sprintf((char *)outbuf, "Password:");
+					*(outbuf+iret) = '\000';
+					if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+#ifdef HAVE_EXPLAIN_H
+						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
+#else	//  HAVE_EXPLAIN_H
+						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
+#endif	//  HAVE_EXPLAIN_H
+					}
 					return;
 				}
 				if ( strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
@@ -1508,27 +1541,28 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				} else {
 					// maybe a longer command...
 					*(buf+80) = '\000';		// make sure its terminated someplace
-					ptr = strtok( (char *)buf, ", \t\n\r" );
-					if (strncmp(ptr,(char *) "OFF",3) == 0) {						// chek for OFF
-						OnOrOff = 2;
-						ptr = strtok( NULL, ", \t\n\r" );
-					} else if (strncmp(ptr,(char *) "ON",2) == 0) {					// check for ON
-						OnOrOff = 1;
-						ptr = strtok( NULL, ", \t\n\r" );
-					} else if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {	// check for STATUS
-						OnOrOff = 3;
-						ptr = strtok( NULL, ", \t\n\r" );
-					} else {														// must be a bad command
-						OnOrOff = 0;
-						goodcommand = 0;
-						iret = sprintf((char *)outbuf, "%s is not a recognized command\n", ptr );
-						*(outbuf+iret) = '\000';
-						if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
-#ifdef HAVE_EXPLAIN_H
-							fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
-#else	//  HAVE_EXPLAIN_H
-							fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
-#endif	//  HAVE_EXPLAIN_H
+					if ( (ptr = strtok( (char *)buf, ", \t\n\r" ) ) ) {
+						if (strncmp(ptr,(char *) "OFF",3) == 0) {						// chek for OFF
+							OnOrOff = 2;
+							ptr = strtok( NULL, ", \t\n\r" );
+						} else if (strncmp(ptr,(char *) "ON",2) == 0) {					// check for ON
+							OnOrOff = 1;
+							ptr = strtok( NULL, ", \t\n\r" );
+						} else if ( strncmp ((char *)buf,(char *)"STATUS",6) == 0 ) {	// check for STATUS
+							OnOrOff = 3;
+							ptr = strtok( NULL, ", \t\n\r" );
+						} else {														// must be a bad command
+							OnOrOff = 0;
+							goodcommand = 0;
+							iret = sprintf((char *)outbuf, "%s is not a recognized command\n", ptr );
+							*(outbuf+iret) = '\000';
+							if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
+	#ifdef HAVE_EXPLAIN_H
+								fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
+	#else	//  HAVE_EXPLAIN_H
+								fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
+	#endif	//  HAVE_EXPLAIN_H
+							}
 						}
 					}
 				}
@@ -1557,6 +1591,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 					} else {
 						send_RackLink_command( &rlport, 0, READPOWEROUTLET_CMD, SET_SCMD, envelope, 6);
 					}
+					PromptMe = 0;
 				}
 			} else {
 				if ( RackLinkIsLoggedIn > -1 ) goodcommand = 0;
@@ -1573,7 +1608,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 				}
 			}
 		}	// endif len > 0
-		if ( RackLinkIsLoggedIn > 0 ) {
+		if ( RackLinkIsLoggedIn > 0 && PromptMe ) {
 			iret = sprintf((char *)outbuf, "RackLink>");
 		}
 		*(outbuf+iret) = '\000';
@@ -1643,6 +1678,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 		// this is a RackLink run... Someone has connected to the telnet server. Now we connect to the remote RackLink
 		// device and then prompt the user on the telnet link for the password to the RackLink device
 
+		comp->cnx = cnx;
 		// first, we need to figure out the RackLink device's ip address:
 		if ( comp->remote == NULL ) {
 			servername = strdup("localhost");
@@ -1707,6 +1743,9 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 		// fix up client data for NetLink use
 		comp->comclient.extra_data = (void*) comp;
 
+		// enable the client (otherwise it will self-disconnect
+		EnableClient = 1;
+		// start polling...
 		if (af_poll_add( comp->comclient.sock, POLLIN, handle_server_socket_raw_event, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for RackLink telnet client event = 0x%x", __func__, cnx->fd, POLLIN );
 
 
@@ -1734,8 +1773,8 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 	}
 
 	// Set user data.
-	cnx->user_data = comp;
-	cnx->disconnect_callback = com_del_cnx;
+	comp->cnx->user_data = comp;
+	comp->cnx->disconnect_callback = com_del_cnx;		// only used for types 1,2 & 4 (see below)
 
 	if ( cnx->inout == 2 ) {		//  RackLink telnet connections will use line mode:
 		// see RFC 2355 and RFC 854:
@@ -1756,14 +1795,16 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 		buf[11] = TEL_BINARY;	// Confirmation that you are expecting the other party to use Binary transmission
 		telnetServerMask[TEL_BINARY] |= SERVERDO;
 		buflen = 12; */
-		buflen = sprintf(buf,"Password:");
-		buf[buflen] = '\000';
-
+//		buflen = sprintf(buf,"Password:");
+//		buf[buflen] = '\000';
+		buflen = 0;
 	} else if ( cnx->inout == 3 ) {
 // if the remote is a RackLink, it is not a telnet service!
-//		buflen = 0;
-		buflen = sprintf(buf,"Password:");
-		buf[buflen] = '\000';
+		buflen = 0;
+//		buflen = sprintf(buf,"Password:");
+//		buf[buflen] = '\000';
+		// set the cnx delete callback (unique for tcp Racklink connections)
+		comp->cnx->disconnect_callback = com_del_RackLink_cnx;
 	} else {					// all other type of telnet connections
 		buf[0] = IAC;
 		buf[1] = WILL;	// Will
@@ -1814,8 +1855,10 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 	char	buf[256];
 	int buflen = 0;
 	int iret;
-	af_client_t *fd = rlport->fd;
-	comport *coms = (comport*)fd->extra_data;
+	af_poll_t *ap;
+	comport *coms;
+	ap = rlport->ap;
+	coms = (comport*)ap->context;
 	// login/response
 	if ( subcommand == 0x10 && datasize == 4) {
 		if ( *envelope == 0 ) {
@@ -1829,10 +1872,10 @@ CommandCallBack_t ProcessLogin ( rlsendport_t *rlport, int destination, int subc
 		buf[buflen] = '\000';
 	}
 
-	if ( rlport->inout == 2 && buflen ) {
-		if ( ( iret = write( coms->cnx->fd, buf, buflen ) ) == -1 ) {		// going out to the newly connected telnet client
+	if ( (rlport->inout == 2 || rlport->inout == 3 ) && buflen ) {
+		if ( ( iret = write( coms->comserver.cnx->fd, buf, buflen ) ) == -1 ) {		// going out to the newly connected telnet client
 #ifdef HAVE_EXPLAIN_H
-			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, explain_write(coms->cnx->fd, buf, buflen ) );
+			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, explain_write(coms->comserver.cnx->fd, buf, buflen ) );
 #else	//  HAVE_EXPLAIN_H
 			fprintf(stderr, "write to telnet port %s could not be performed: errno %d (%s)", "?", errno, strerror(errno) );
 #endif	//  HAVE_EXPLAIN_H
@@ -1868,11 +1911,13 @@ CommandCallBack_t ProcessPowerOutletStatus ( rlsendport_t *rlport, int destinati
 	int inout;
 	int iret;
 	int numout;
-	af_client_t *client;
+//	af_client_t *client;
 	comport *coms;
+	af_poll_t *ap;
 	inout = rlport->inout;
-	client = rlport->fd;
-	coms = (comport*)client->extra_data;
+	ap = rlport->ap;
+//	client = rlport->fd;
+	coms = (comport*)ap->context;
 
 	// print the switch setting
 	if ( datasize > 255 ) goto ret1;
@@ -1882,11 +1927,11 @@ CommandCallBack_t ProcessPowerOutletStatus ( rlsendport_t *rlport, int destinati
 		ctemp[4] = '\000';
 		printf ("Power outlet %u is %s, cycle time is %s seconds\n",*envelope,ONOFF(*(envelope+1)),ctemp );
 		if ( inout == 2 || inout == 3 ) {
-			iret = sprintf((char *)outbuf, "Power outlet %u is %s, cycle time is %s seconds\n",*envelope,ONOFF(*(envelope+1)),ctemp );
+			iret = sprintf((char *)outbuf, "Power outlet %u is %s, cycle time is %s seconds\nRackLink>",*envelope,ONOFF(*(envelope+1)),ctemp );
 			*(outbuf+iret) = '\000';
-			if ( ( numout = write( coms->fd, outbuf, iret+1 ) ) == -1 ) {
+			if ( ( numout = write( coms->comserver.cnx->fd, outbuf, iret+1 ) ) == -1 ) {
 #ifdef HAVE_EXPLAIN_H
-				fprintf(stderr, "write to RackLink telnet port %i at %s line %i could not be performed: errno %d (%s)", coms->fd, __func__ , __LINE__ -2 , errno, explain_write(coms->fd, outbuf, iret+1) );
+				fprintf(stderr, "write to RackLink telnet port %i at %s line %i could not be performed: errno %d (%s)", coms->fd, __func__ , __LINE__ -2 , errno, explain_write(coms->comserver.cnx->fd, outbuf, iret+1) );
 #else	//  HAVE_EXPLAIN_H
 				fprintf(stderr, "write to RackLink telnet port %i at %s line %i could not be performed: errno %d (%s)", coms->fd, __func__ , __LINE__ -4 , errno, strerror(errno) );
 #endif	//  HAVE_EXPLAIN_H
@@ -1994,8 +2039,11 @@ int send_RackLink_command( rlsendport_t *rlport, int destination,int command,int
 	return(exitval);
 }
 
-int send_RackLink_login( rlsendport_t *rlport, char * password) {
+int send_RackLink_login( rlsendport_t *rlport, char * passwordin) {
 	char * userpassword = NULL;
+	char * password;
+	password = passwordin;
+	if ( password == NULL ) password = strdup("");
 	userpassword = (char*)malloc(strlen(password)+7);
 	strcpy(userpassword,"user|");
 	strcat(userpassword,password);

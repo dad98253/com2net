@@ -20,6 +20,7 @@
 #ifndef COM2NETBMAIN
 #define EXTERN          extern
 #define INITIZERO
+#define INITIONE
 #define INITSZERO
 #define INITBOOLFALSE
 #define INITBOOLTRUE
@@ -30,6 +31,7 @@
 #else
 #define EXTERN
 #define INITIZERO       =0
+#define INITIONE		=1
 #define INITSZERO       ={0}
 #define INITBOOLFALSE   =false
 #define INITBOOLTRUE    =true
@@ -106,6 +108,7 @@ typedef struct RackLinkSendPort
 	af_client_t *fd;
     int comfd;
     int inout;
+    af_poll_t *ap;
 } rlsendport_t;
 
 
@@ -132,5 +135,6 @@ EXTERN unsigned char telnetClientMask[256] INITSZERO;
 EXTERN unsigned char telnetTerminalMode[256] INITSZERO;
 EXTERN unsigned char telnetEditMode INITIZERO;
 EXTERN char RackLinkIsLoggedIn INITIZERO;
+EXTERN char EnableClient INITIONE;
 
 #endif /* RACKLINK_H_ */

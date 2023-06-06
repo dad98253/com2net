@@ -490,7 +490,18 @@ void handle_server_socket_raw_event( af_poll_t *af )
 	rlport.fd = &(coms->comclient);
 	rlport.comfd = -1;
 	rlport.inout =	3;
+	rlport.ap = af;
 
+	// check to see if we are suppose to disconnect
+	if ( EnableClient == 0 ) {
+		af_poll_rem( af->fd );
+		if ( coms->fd >= 0 )
+		{
+			close( coms->fd );
+			coms->fd = -1;
+		}
+		return;
+	}
 	//af_log_print(LOG_DEBUG, "%s: revents %d", __func__, revents);
 
 	// Read with 1 ms timeout since we are using the poll loop to get here.
