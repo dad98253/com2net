@@ -139,6 +139,7 @@ extern int termios(int fd);
 extern int af_client_start( comport *coms );
 extern void handle_server_socket_event( af_poll_t *af );
 extern void handle_server_socket_raw_event( af_poll_t *af );
+extern void cnx_client_stop( af_client_t *client );
 
 int stripquotes(char ** string ) {
 	char * prompt = *string;
@@ -774,12 +775,14 @@ void RackLink_com_port_handler( af_poll_t *ap )
 	int 			 lastchr;
 	int 			 morechr;
 	int				 i;
-	comport         *comp = (comport *)ap->context;
-	af_client_t		*client = &(comp->comclient);
 	int				 iret = 0;
 	rlsendport_t	 rlport;
 	int				 truelength;
+	comport         *comp;
+	af_client_t		*client;
 
+	comp = (comport *)ap->context;
+	client = &(comp->comclient);
 	rlport.fd = client;
 	rlport.comfd = comp->fd;
 	rlport.inout =	comp->inout;
@@ -788,6 +791,13 @@ void RackLink_com_port_handler( af_poll_t *ap )
 	buf = comp->buf;
 	bufstart = comp->bufstart;
 
+	// check to see if we are suppose to disconnect
+	if ( EnableClient == 0 ) {
+		af_log_print( APPF_MASK_SERVER+LOG_INFO, "stop polling on %i and close the serial port", ap->fd );
+		af_poll_rem( ap->fd );
+		com_port_close( comp );
+		return;
+	}
 
 //	fprintf (stdout,"comp,client,buf,bufstart = %p, %p, %p, %p\n",comp,client,buf,bufstart);
 	if ( ap->revents & POLLIN )
@@ -1080,7 +1090,7 @@ void com_del_RackLink_cnx( af_server_cnx_t *cnx )
 	// stop and delete the connection to the RackLink client
 	client = cnx->client;
 	client = &(comp->comclient);
-	af_client_disconnect(client);
+	cnx_client_stop(client);
 //	af_client_delete(client);
 
 	// Remove my connection structure
@@ -1525,15 +1535,6 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 					RackLinkIsLoggedIn = -1;
 					EnableClient = 0;
 					af_server_disconnect(cnx);
-					iret = sprintf((char *)outbuf, "Password:");
-					*(outbuf+iret) = '\000';
-					if ( ( numout = write( ap->fd, outbuf, iret+1 ) ) == -1 ) {
-#ifdef HAVE_EXPLAIN_H
-						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, explain_write(ap->fd, outbuf, iret+1) );
-#else	//  HAVE_EXPLAIN_H
-						fprintf(stderr, "write to RackLink telnet port at %s line %i could not be performed: errno %d (%s)", __func__ , __LINE__ , errno, strerror(errno) );
-#endif	//  HAVE_EXPLAIN_H
-					}
 					return;
 				}
 				if ( strncmp ((char *)buf,(char *)"HELP",4) == 0 ) {
@@ -1665,11 +1666,15 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 				af_server_disconnect(cnx);
 				return;
 			}
+		} else {
+			af_log_print( LOG_DEBUG, "com port %s (fd=%d) is already open.. skip open_comport", comp->dev, comp->fd );
 		}
 
 		comp->cnx = cnx;
 
 		if ( cnx->inout == 2 ) {
+			// enable the client (otherwise it will self-disconnect
+			EnableClient = 1;
 			if (af_poll_add( comp->fd, POLLIN, RackLink_com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
 		} else  {
 			if (af_poll_add( comp->fd, POLLIN, com_port_handler, comp ) == 0) af_log_print( LOG_DEBUG, "%s: polling %d for event = 0x%x", __func__, comp->fd, POLLIN );
@@ -1774,7 +1779,6 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 
 	// Set user data.
 	comp->cnx->user_data = comp;
-	comp->cnx->disconnect_callback = com_del_cnx;		// only used for types 1,2 & 4 (see below)
 
 	if ( cnx->inout == 2 ) {		//  RackLink telnet connections will use line mode:
 		// see RFC 2355 and RFC 854:
@@ -1798,6 +1802,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 //		buflen = sprintf(buf,"Password:");
 //		buf[buflen] = '\000';
 		buflen = 0;
+		comp->cnx->disconnect_callback = com_del_RackLink_cnx;
 	} else if ( cnx->inout == 3 ) {
 // if the remote is a RackLink, it is not a telnet service!
 		buflen = 0;
@@ -1823,6 +1828,7 @@ void com_new_cnx( af_server_cnx_t *cnx, void *context )
 		buf[11] = TEL_BINARY;	// Confirmation that you are expecting the other party to use Binary transmission
 		telnetServerMask[TEL_BINARY] |= SERVERDO;
 		buflen = 12;
+		comp->cnx->disconnect_callback = com_del_cnx;		// only used for types 1 & 4
 	}
 
 	if (buflen ) {

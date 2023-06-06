@@ -398,15 +398,13 @@ int af_client_start( comport *coms )
 
 }
 
-void af_client_stop( af_client_t *client )
+void cnx_client_stop( af_client_t *client )
 {
+	if (client->sock >= 0 ) {
+		af_poll_rem( client->sock );
+	}
 	af_client_disconnect( client );
-
-	af_poll_rem( client->sock );
-
-	close( client->sock );
-
-	client->sock = -1;
+	return;
 }
 
 void myexit(int status)
