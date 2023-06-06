@@ -250,9 +250,9 @@ int af_client_start( comport *coms )
 		if (hp == NULL ) {
 			int errsv = errno;
 			int herrsv = h_errno;
-			af_log_print(LOG_INFO,"Client: Cannot resolve address [%s]: Error %d, h_err = %i\n",
+			af_log_print( LOG_ERR,"Client: Cannot resolve address [%s]: Error %d, h_err = %i\n",
 				servername,errsv,herrsv);
-			af_log_print(LOG_INFO,"%s\n", hstrerror(h_errno));
+			af_log_print( LOG_ERR,"%s\n", hstrerror(h_errno));
 			if (h_errno == HOST_NOT_FOUND) af_log_print(LOG_INFO,"Note: on linux, ip addresses must have valid RDNS entries\n");
 			ip = server.sin_addr.s_addr = inet_addr(servername);
 			server.sin_family = AF_INET;
@@ -381,9 +381,9 @@ int af_client_start( comport *coms )
 		strcat(buf,(char*)"\r\n");
 		if ( ( iret = write( coms->fd, buf, strlen(buf) ) ) ) {
 #ifdef HAVE_EXPLAIN_H
-			fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(coms->fd, buf, strlen(buf)) );
+			af_log_print( LOG_ERR, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(coms->fd, buf, strlen(buf)) );
 #else	//  HAVE_EXPLAIN_H
-			fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
+			af_log_print( LOG_ERR, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
 			//               write to telnet port???
 #endif	//  HAVE_EXPLAIN_H
 		}
@@ -490,6 +490,10 @@ void handle_server_socket_raw_event( af_poll_t *af )
 	int status;
 	int i;
 	int unused = 0;
+	int lastchr;
+	int morechr;
+	int iret;
+	char * dumpbuf;
 	rlsendport_t rlport;
 	char buf[MAX_SOCK_READ_BUF];
 	int len = MAX_SOCK_READ_BUF;
@@ -549,12 +553,24 @@ void handle_server_socket_raw_event( af_poll_t *af )
 
 	// Handle any data we read from the sock
 	if ( len > 0 ) {
-		printf("received %i bytes : (0x)",len);
-		for ( i = 0; i < len; i++) {
-			printf(" %02x", (unsigned char)(*(buf+i)));
+		if ( coms->logfh ) {
+			dumpbuf = (char*)calloc(len*3+100,1);
+			lastchr = sprintf(dumpbuf, "received %i bytes : (0x)",len);
+			for ( i = 0; i < len; i++) {
+				morechr = sprintf(dumpbuf+lastchr," %02x", (unsigned char)(*(buf+i)));
+				lastchr += morechr;
+			}
+			morechr = sprintf(dumpbuf+lastchr,"\n");
+			lastchr += morechr;
+			*(dumpbuf+lastchr) = '\000';
+			fflush(stdout);
+			iret = fwrite( dumpbuf, sizeof(char), lastchr+1, coms->logfh );
+			if ( iret < lastchr ) {
+				af_log_print( LOG_ERR, "fwrite in %s failed at %i - returned %i when %i was expected", __func__ , __LINE__ - 2 , iret, lastchr );
+			}
+			fflush( coms->logfh );
+			free(dumpbuf);
 		}
-		printf("\n");
-		fflush(stdout);
 		process_RackLink_message(&rlport, buf, &len, &unused);
 	}
 }
@@ -622,7 +638,7 @@ void client_com_handle_event( af_poll_t *ap )
 		{
 			if ( errno != EAGAIN || len == 0 )
 			{
-				af_log_print( APPF_MASK_SERVER+LOG_INFO, "client fd %d closed: errno %d (%s)",\
+				af_log_print( LOG_ERR, "client fd %d closed: errno %d (%s)",\
 					ap->fd, errno, strerror(errno)  );
 
 				af_server_disconnect(cnx);
@@ -640,9 +656,9 @@ void client_com_handle_event( af_poll_t *ap )
 
 			if ( ( iret = write( comp->fd, buf, len ) ) ) {
 #ifdef HAVE_EXPLAIN_H
-				fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(comp->fd, buf, len) );
+				af_log_print( LOG_ERR, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 2 , errno, explain_read(comp->fd, buf, len) );
 #else	//  HAVE_EXPLAIN_H
-				fprintf(stderr, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
+				af_log_print( LOG_ERR, "write to com port %s at %s line %i could not be performed: errno %d (%s)", "?", __func__ , __LINE__ - 4 , errno, strerror(errno) );
 				//               write to telnet port???
 #endif	//  HAVE_EXPLAIN_H
 			}
@@ -651,7 +667,7 @@ void client_com_handle_event( af_poll_t *ap )
 	else if ( ap->revents )
 	{
 		// Anything but POLLIN is an error.
-		af_log_print( APPF_MASK_SERVER+LOG_INFO, "dcli socket error, revents: %d", ap->revents );
+		af_log_print( LOG_ERR, "dcli socket error, revents: %d", ap->revents );
 		af_server_disconnect(cnx);
 	}
 }
@@ -735,8 +751,7 @@ void _af_client_handle_new_connection( comport *coms )
         /* Mask this - its legal to refuse connections at boot time */
         /* We end up filling processes logs with this if we leave   */
         /* without the mask                                         */
-		af_log_print(LOG_ERR,
-                     "failed to accept new client connection");
+		af_log_print(LOG_ERR, "failed to accept new client connection");
 	}
 }
 
@@ -755,8 +770,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 
 	if ( s < 0 )
 	{
-		af_log_print(LOG_ERR, "%s: connect() failed (%d) %s",\
-			__func__, errno, strerror(errno) );
+		af_log_print(LOG_ERR, "%s: connect() failed (%d) %s", __func__, errno, strerror(errno) );
 		return NULL;
 	}
 
@@ -764,9 +778,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 	if ( server->num_cnx >= server->max_cnx )
 	{
 		close( s );
-		af_log_print(LOG_ERR, "%s: rejecting new client connection: max number of sessions (%d) already open",\
-			__func__, server->max_cnx );
-
+		af_log_print(LOG_ERR, "%s: rejecting new client connection: max number of sessions (%d) already open", __func__, server->max_cnx );
 		return NULL;
 	}
 
@@ -774,7 +786,7 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 	if ( cnx == NULL )
 	{
 		close(s);
-		af_log_print( LOG_ERR, "Failed to allocate memory for new connection");
+		af_log_print(LOG_ERR, "Failed to allocate memory for new connection");
 		return NULL;
 	}
 
@@ -796,7 +808,6 @@ af_server_cnx_t *_af_client_add_connection( comport *coms )
 		close( s );
 		free(cnx);
 		af_log_print(LOG_ERR, "%s: dup() failed on fd=%d, errno=%d (%s)", __func__, s, errno, strerror(errno) );
-
 		return NULL;
 	}
 
