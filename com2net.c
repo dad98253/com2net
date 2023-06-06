@@ -1471,7 +1471,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 	int				 numout;
 	unsigned char    buf[2048];
 	unsigned char    outbuf[2048];
-	char *			 ptr;
+	char *			 ptr = NULL;;
 //	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
 //	comport *comp = (comport *)cnx->user_data;
 	comport *comp = (comport *)ap->context;	//  try this?? looks right hmmm...
@@ -2305,7 +2305,7 @@ int process_RackLink_message( rlsendport_t *rlport, char *buf, int *len, int *un
 int decode_RackLink_command(int *destination,int *command,int *subcommand,unsigned char * raw, unsigned int len, unsigned char ** data, int * datasize, unsigned char ** nextpacket) {
 	unsigned int sum = 0;
 	unsigned char * datapacket;
-	unsigned char chksum;
+	unsigned char chksum = 0;
 	int i;
 	int packetsize;
 	*nextpacket = NULL;
