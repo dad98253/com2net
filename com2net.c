@@ -672,9 +672,10 @@ void c2m_cli( char *cmd, af_server_cnx_t *cnx )
 		}
 	} else {
 		fprintf( cnx->fh, " Command NOT defined: %s\n", cmd );
-		fprintf( cnx->fh, " Enter \"bye\" to halt all af_servers\n" );
+		fprintf( cnx->fh, " Enter \"bye\" to halt all com2net services and kill the daemon\n" );
 	}
 	af_server_prompt( cnx );
+	exit(1);
 
 }
 
