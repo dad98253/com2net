@@ -32,8 +32,12 @@ out,23,/dev/ttyS0,2400,/tmp/log/com0b.log,localhost,ogin: ,dad
 #// ON <Outlet Number>
 #// OFF <Outlet Number>
 #
-# Note that in order to log into the RackLink, you MUST first set the appropriate
-# password(s) using the web interface. The TCP (racklink) and serial (racklinks)
-# command interfaces will not be available until these passwords are set. (see
-# the I-00472-Series-Protocol.pdf file for details.)
+#Notes:
+#    1) In order to log into the RackLink, you MUST first set the appropriate password(s) using the web interface. The TCP (racklink) and serial (racklinks) command interfaces will not be available until these passwords are set. (see the “I-00472-Series-Protocol.pdf” file for details.)
+#    2) The precompile define “DEBUG” is provided for use during program development and checkout. When DEBUG is set, the program can only run as a local process (non-daemon). When DEBUG is not set, the default is for the program to daemonize.
+#    3) Accessing a serial port will normally require special privilege on a unix system. In a typical production environment, com2net will be installed as a service to start automatically at boot and run as root. Be sure to specify a log file location and do not specify the “-f” flag. For example: <binary location>/com2net -o /tmp/debug.txt -l 0 -n com2net
+#    4) A simple “Control Server” is available on localhost port 13056. This permits any user on the host machine to terminate the com2net daemon. Simply telnet localhost 13056. You will be presented with a com2net> prompt. Enter “bye” to kill the daemon.
+#    5) The RackLink has only one serial port. Thus, only one process at a time can connect to it using the “racklinks” (serial) method. The second person to connect will kick off the first. The RackLink will be unaware that a new person is connected and will continue the session. This can be a security issue. If this method is used, port 60000 on the host should be restricted for use only by trusted hosts.
+#    6) If a second process logs into a “racklink” (TCP) server, it will kick the first person out.
+#    7) If a “racklink” (TCP connection) and a “racklinks” (serial connection) is being used, two persons can log into the RackLink at once and both can control the RackLink.
 
