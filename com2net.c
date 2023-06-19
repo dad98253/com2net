@@ -1472,7 +1472,7 @@ void handle_RackLink_server_socket_event( af_poll_t *ap )
 	int				 numout;
 	unsigned char    buf[2048];
 	unsigned char    outbuf[2048];
-	char *			 ptr = NULL;;
+	char *			 ptr = NULL;
 //	af_server_cnx_t *cnx = (af_server_cnx_t *)ap->context;
 //	comport *comp = (comport *)cnx->user_data;
 	comport *comp = (comport *)ap->context;	//  try this?? looks right hmmm...
